@@ -89,12 +89,33 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
   const handleApprove = async (id: string) => {
     setActionLoadingId(id);
     try {
-      const { error } = await supabase
-        .from('puko_degerlendirmeleri')
-        .update({ durum: 'Onaylandı' })
-        .eq('id', id);
-      if (error) throw error;
-      setData(prev => prev.filter(item => item.id !== id));
+      const targetRow = data.find(item => item.id === id);
+      const altOlcutId = targetRow?.alt_olcut_id;
+      const donemId = targetRow?.donem_id;
+
+      if (altOlcutId && donemId) {
+        const { error } = await supabase
+          .from('puko_degerlendirmeleri')
+          .update({ durum: 'Onaylandı', red_nedeni: null })
+          .eq('alt_olcut_id', altOlcutId)
+          .eq('donem_id', donemId);
+        if (error) throw error;
+
+        await supabase
+          .from('ozdegerlendirme_raporlari')
+          .update({ onay_durumu: 'onaylandi', red_nedeni: null })
+          .eq('alt_olcut_id', String(altOlcutId))
+          .eq('donem_id', donemId);
+
+        setData(prev => prev.filter(item => item.alt_olcut_id !== altOlcutId));
+      } else {
+        const { error } = await supabase
+          .from('puko_degerlendirmeleri')
+          .update({ durum: 'Onaylandı', red_nedeni: null })
+          .eq('id', id);
+        if (error) throw error;
+        setData(prev => prev.filter(item => item.id !== id));
+      }
     } catch (err: any) {
       alert('Onay sırasında hata: ' + err.message);
     } finally {
@@ -112,12 +133,33 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
     if (!rejectingId || !rejectReason.trim()) { alert('Red nedeni giriniz.'); return; }
     setIsSubmitting(true);
     try {
-      const { error } = await supabase
-        .from('puko_degerlendirmeleri')
-        .update({ durum: 'Reddedildi', red_nedeni: rejectReason })
-        .eq('id', rejectingId);
-      if (error) throw error;
-      setData(prev => prev.filter(item => item.id !== rejectingId));
+      const targetRow = data.find(item => item.id === rejectingId);
+      const altOlcutId = targetRow?.alt_olcut_id;
+      const donemId = targetRow?.donem_id;
+
+      if (altOlcutId && donemId) {
+        const { error } = await supabase
+          .from('puko_degerlendirmeleri')
+          .update({ durum: 'Reddedildi', red_nedeni: rejectReason })
+          .eq('alt_olcut_id', altOlcutId)
+          .eq('donem_id', donemId);
+        if (error) throw error;
+
+        await supabase
+          .from('ozdegerlendirme_raporlari')
+          .update({ onay_durumu: 'reddedildi', red_nedeni: rejectReason })
+          .eq('alt_olcut_id', String(altOlcutId))
+          .eq('donem_id', donemId);
+
+        setData(prev => prev.filter(item => item.alt_olcut_id !== altOlcutId));
+      } else {
+        const { error } = await supabase
+          .from('puko_degerlendirmeleri')
+          .update({ durum: 'Reddedildi', red_nedeni: rejectReason })
+          .eq('id', rejectingId);
+        if (error) throw error;
+        setData(prev => prev.filter(item => item.id !== rejectingId));
+      }
       setIsRejectModalOpen(false);
     } catch (err: any) {
       alert('Red işlemi sırasında hata: ' + err.message);
