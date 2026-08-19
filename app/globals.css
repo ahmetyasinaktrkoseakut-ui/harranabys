@@ -1,0 +1,203 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme {
+  /* Academic Colors Overrides - Sapphire Blue primary, Emerald success, Amber warning */
+  --color-blue-500: #1e3a8a; /* Sapphire Blue (Primary Accent) */
+  --color-blue-600: #0f172a; /* Deep Sapphire Blue (Primary Dark) */
+  --color-blue-700: #0a1120; /* Very Deep Sapphire Blue */
+
+  /* Map Indigo variables (used as the primary branding color across components) to Sapphire Blue */
+  --color-indigo-500: #2b59c3; /* Lighter Sapphire Blue */
+  --color-indigo-600: #1e3a8a; /* Sapphire Blue (Primary Accent) */
+  --color-indigo-700: #0f172a; /* Deep Sapphire Blue */
+
+  --color-emerald-500: #059669; /* Emerald Green (Success Accent) */
+  --color-emerald-600: #047857;
+  --color-emerald-700: #065f46;
+
+  --color-amber-500: #f59e0b; /* Warm Amber (Warning Accent) */
+  --color-amber-600: #d97706;
+  --color-amber-700: #b45309;
+  
+  --color-brand-600: #1e3a8a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  --font-mono: var(--font-geist-mono);
+}
+
+/* Custom variables for Dark Mode & Theme */
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+  --text-main: #1e293b;
+  --text-muted: #64748b;
+  --header-bg: #ffffff;
+  --sidebar-bg: #0f172a;
+}
+
+.dark {
+  --background: #0a1324;
+  --foreground: #f8fafc;
+  --card-bg: #0f1e36; /* Oxford Blue */
+  --card-border: #1e2d4a;
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  --header-bg: #0d1b30;
+  --sidebar-bg: #080f1a;
+}
+
+/* Custom Micro-interactions & Smooth Transitions */
+.hover-card-effect {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.hover-card-effect:hover {
+  transform: translateY(-3px) scale(1.008);
+  box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.15);
+}
+.dark .hover-card-effect:hover {
+  box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.4);
+}
+
+.micro-press {
+  transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.micro-press:active {
+  transform: scale(0.96);
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Global Dark Mode Overrides (Without disrupting standard logic) */
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  line-height: 1.6;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.dark body {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+.dark .bg-white {
+  background-color: var(--card-bg) !important;
+}
+
+.dark .bg-slate-50 {
+  background-color: var(--background) !important;
+}
+
+.dark .bg-slate-100 {
+  background-color: #132542 !important;
+}
+
+.dark .text-slate-800,
+.dark .text-slate-900,
+.dark .text-slate-700 {
+  color: var(--text-main) !important;
+}
+
+.dark .text-slate-500,
+.dark .text-slate-600 {
+  color: var(--text-muted) !important;
+}
+
+.dark .border-slate-200,
+.dark .border-slate-100,
+.dark .border-slate-300 {
+  border-color: var(--card-border) !important;
+}
+
+.dark .hover\:bg-slate-50:hover {
+  background-color: #132542 !important;
+}
+
+.dark .bg-blue-50 {
+  background-color: #1a2d4b !important;
+}
+
+.dark .bg-amber-50 {
+  background-color: #2b2416 !important;
+}
+
+.dark .bg-emerald-50 {
+  background-color: #162a1f !important;
+}
+
+.dark .bg-indigo-50 {
+  background-color: #2b2318 !important;
+}
+
+.dark .bg-red-50 {
+  background-color: #321c1f !important;
+}
+
+.dark header.bg-white {
+  background-color: var(--header-bg) !important;
+  border-color: var(--card-border) !important;
+}
+
+.dark input, 
+.dark textarea, 
+.dark select {
+  background-color: #132542 !important;
+  color: var(--text-main) !important;
+  border-color: var(--card-border) !important;
+}
+
+.dark input::placeholder, 
+.dark textarea::placeholder {
+  color: #64748b !important;
+}
+
+.dark .ProseMirror {
+  background-color: #132542 !important;
+  color: var(--text-main) !important;
+}
+
+.dark table {
+  color: var(--text-main) !important;
+}
+
+.dark th {
+  background-color: #132542 !important;
+  color: #94a3b8 !important;
+}
+
+.dark tr:hover {
+  background-color: #12223c !important;
+}
+
