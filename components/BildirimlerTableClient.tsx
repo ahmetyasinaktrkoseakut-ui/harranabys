@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase/client';
 import { useRouter } from '@/i18n/routing';
 import { useLocale, useTranslations } from 'next-intl';
 import { getLocalizedField } from '@/lib/i18n-utils';
+import { validateUploadedFile } from '@/lib/fileValidation';
 
 const getAsamaSlug = (asama: string) => {
   if (!asama) return 'kontrol-etme';
@@ -135,15 +136,10 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
   const handleRevizeSubmit = async () => {
     if (!file || !selectedRow) return;
     
-    // Güvenlik: Dosya uzantı ve boyut denetimi
-    const fileExt = file.name.split('.').pop()?.toLowerCase();
-    const allowedExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx'];
-    if (!fileExt || !allowedExtensions.includes(fileExt)) {
-      setModalError('Geçersiz dosya formatı! Sadece PDF, Görsel veya Office belgesi seçebilirsiniz.');
-      return;
-    }
-    if (file.size > 25 * 1024 * 1024) {
-      setModalError('Dosya boyutu 25MB sınırını aşamaz.');
+    // Güvenlik: Magic Byte, MIME, Uzantı, Çift Uzantı ve Boyut Denetimi
+    const validation = await validateUploadedFile(file);
+    if (!validation.valid) {
+      setModalError(validation.error || 'Geçersiz dosya.');
       return;
     }
 
@@ -151,6 +147,7 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
     setModalError(null);
 
     try {
+      const fileExt = file.name.split('.').pop()?.toLowerCase();
       // 1. Upload new file
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
       
@@ -160,11 +157,12 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
 
       if (uploadError) throw new Error(t('modal.upload_error') + ': ' + uploadError.message);
 
-      const { data: urlData } = supabase.storage
+      // Güvenli İmzalı URL Üret (Private Bucket Koruması)
+      const { data: signData } = await supabase.storage
         .from('kanit_dosyalari')
-        .getPublicUrl(fileName);
+        .createSignedUrl(fileName, 315360000);
         
-      const fileUrl = urlData.publicUrl;
+      const fileUrl = signData?.signedUrl || supabase.storage.from('kanit_dosyalari').getPublicUrl(fileName).data.publicUrl;
 
       // 2. Update database record
       const { error: dbError } = await supabase

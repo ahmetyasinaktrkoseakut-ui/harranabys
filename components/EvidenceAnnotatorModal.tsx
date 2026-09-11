@@ -5,6 +5,7 @@ import { Loader2, X, Pencil, Trash2, Check, RefreshCw, Eye, FileText, Image as I
 import { supabase } from '@/lib/supabase/client';
 import { PDFDocument } from 'pdf-lib';
 import DOMPurify from 'dompurify';
+import { validateUploadedFile } from '@/lib/fileValidation';
 
 interface EvidenceDoc {
   name: string;
@@ -128,6 +129,23 @@ export default function EvidenceAnnotatorModal({
     }
   }, [doc]);
 
+  const getSecureUrl = async (url: string) => {
+    if (!url) return '';
+    if (url.includes('/storage/v1/object/')) {
+      try {
+        const parts = url.split('/storage/v1/object/');
+        const afterObject = parts[1]?.replace(/^public\//, '')?.replace(/^sign\//, '') || '';
+        const [bucket, ...pathParts] = afterObject.split('?')[0].split('/');
+        const filePath = pathParts.join('/');
+        if (bucket && filePath) {
+          const { data } = await supabase.storage.from(bucket).createSignedUrl(decodeURIComponent(filePath), 3600);
+          if (data?.signedUrl) return data.signedUrl;
+        }
+      } catch (_) {}
+    }
+    return url;
+  };
+
   // Render Word Document using Mammoth.js
   const renderWordDocument = async () => {
     if (!isOpen || !doc?.url || !isOfficeDoc) return;
@@ -135,7 +153,8 @@ export default function EvidenceAnnotatorModal({
 
     try {
       if (mammothLoaded && (window as any).mammoth) {
-        const res = await fetch(doc.url);
+        const targetUrl = await getSecureUrl(doc.url);
+        const res = await fetch(targetUrl);
         const arrayBuffer = await res.arrayBuffer();
         const result = await (window as any).mammoth.convertToHtml({ arrayBuffer });
         setWordHtml(result.value);
@@ -182,7 +201,7 @@ export default function EvidenceAnnotatorModal({
       if (isImage) {
         const img = new Image();
         img.crossOrigin = 'anonymous';
-        img.src = doc.url;
+        img.src = await getSecureUrl(doc.url);
         img.onload = () => {
           const w = img.naturalWidth || img.width;
           const h = img.naturalHeight || img.height;
@@ -203,7 +222,8 @@ export default function EvidenceAnnotatorModal({
         };
       } else if (isPdf && pdfLibLoaded && (window as any).pdfjsLib) {
         const pdfjs = (window as any).pdfjsLib;
-        const loadingTask = pdfjs.getDocument(doc.url.split('#')[0]);
+        const targetPdfUrl = await getSecureUrl(doc.url);
+        const loadingTask = pdfjs.getDocument(targetPdfUrl.split('#')[0]);
         const pdf = await loadingTask.promise;
         setTotalPages(pdf.numPages);
 
@@ -353,26 +373,23 @@ export default function EvidenceAnnotatorModal({
 
       // 1. Replacement file upload
       if (replacementFile) {
-        const fileExt = replacementFile.name.split('.').pop()?.toLowerCase();
-        const allowedExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx'];
-        if (!fileExt || !allowedExtensions.includes(fileExt)) {
-          alert('Geçersiz dosya uzantısı! Yalnızca PDF, Resim veya Office dokümanı yükleyebilirsiniz.');
-          setIsSaving(false);
-          return;
-        }
-        if (replacementFile.size > 25 * 1024 * 1024) {
-          alert('Dosya boyutu 25MB sınırını aşamaz.');
+        // Güvenlik: Magic Byte, MIME, Uzantı, Çift Uzantı ve Boyut Denetimi
+        const validation = await validateUploadedFile(replacementFile);
+        if (!validation.valid) {
+          alert(validation.error);
           setIsSaving(false);
           return;
         }
 
+        const fileExt = replacementFile.name.split('.').pop()?.toLowerCase();
         oldUrlToDelete = doc.url;
         const newFileName = `duzeltilmis_${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
         const { error: uploadError } = await supabase.storage.from('dokumanlar').upload(newFileName, replacementFile);
         if (uploadError) throw uploadError;
 
-        const { data: publicUrlData } = supabase.storage.from('dokumanlar').getPublicUrl(newFileName);
-        finalUrl = publicUrlData.publicUrl;
+        // Güvenli İmzalı URL Üret (Private Bucket Koruması)
+        const { data: signData } = await supabase.storage.from('dokumanlar').createSignedUrl(newFileName, 315360000);
+        finalUrl = signData?.signedUrl || supabase.storage.from('dokumanlar').getPublicUrl(newFileName).data.publicUrl;
       } 
       // 2. Export Word Document Drawing using html2canvas
       else if (isOfficeDoc && wordContainerRef.current && (window as any).html2canvas) {
@@ -395,7 +412,8 @@ export default function EvidenceAnnotatorModal({
         const cleanName = doc.name.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/\.[^/.]+$/, '');
         
         try {
-          const existingPdfBytes = await fetch(doc.url).then(res => res.arrayBuffer());
+          const targetPdfUrl = await getSecureUrl(doc.url);
+          const existingPdfBytes = await fetch(targetPdfUrl).then(res => res.arrayBuffer());
           const pdfDoc = await PDFDocument.load(existingPdfBytes);
           
           const canvas = canvasRef.current;

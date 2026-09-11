@@ -73,8 +73,24 @@ CREATE POLICY "profiller_update_own" ON public.profiller
   USING (auth.uid() = id)
   WITH CHECK (auth.uid() = id);
 
--- 4. STORAGE (DOSYA DEPOLAMA) RLS SERTLEŞTİRMESİ (NESNE SAHİPLİĞİ & TÜR DENETİMİ)
--- A. Okuma: Giriş yapmış kullanıcılar
+-- 4. STORAGE (DOSYA DEPOLAMA) BUCKET GİZLİLİĞİ VE RLS SERTLEŞTİRMESİ
+-- A. Bucket Gizliliği: Tamamen Private (public = false) ve Depolama Seviyesi MIME & Boyut Sınırı
+UPDATE storage.buckets 
+SET public = false,
+    file_size_limit = 26214400, -- 25 MB Maksimum
+    allowed_mime_types = ARRAY[
+      'application/pdf',
+      'image/png',
+      'image/jpeg',
+      'image/webp',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel'
+    ]
+WHERE id IN ('kanit_dosyalari', 'dokumanlar');
+
+-- B. Okuma Politikası: Yalnızca sisteme giriş yapmış yetkili kullanıcılar (authenticated) okuyabilir
 DROP POLICY IF EXISTS "dokumanlar_select" ON storage.objects;
 CREATE POLICY "dokumanlar_select" ON storage.objects 
   FOR SELECT TO authenticated 
@@ -85,13 +101,32 @@ CREATE POLICY "kanit_dosyalari_select" ON storage.objects
   FOR SELECT TO authenticated 
   USING (bucket_id = 'kanit_dosyalari');
 
--- B. Yükleme: Sadece izin verilen uzantılar (Uzantısız dosya kesinlikle yasak)
+-- C. Yükleme: Uzantı + MIME Türü + Boyut + Çift Uzantı / Polyglot Koruması
 DROP POLICY IF EXISTS "dokumanlar_insert" ON storage.objects;
 CREATE POLICY "dokumanlar_insert" ON storage.objects 
   FOR INSERT TO authenticated 
   WITH CHECK (
     bucket_id = 'dokumanlar' 
-    AND LOWER(storage.extension(name)) IN ('pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx', 'zip')
+    -- 1. Uzantı Doğrulaması
+    AND LOWER(storage.extension(name)) IN ('pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx', 'doc', 'xls')
+    -- 2. Çift uzantı ve çalıştırılabilir dosya koruması (polyglot engeli)
+    AND name !~* '\.(exe|bat|cmd|sh|php|phtml|jsp|asp|aspx|cgi|pl|py|js|vbs|jar)\.'
+    -- 3. Gerçek MIME Türü Doğrulaması (metadata->>mimetype)
+    AND (
+      (LOWER(storage.extension(name)) = 'pdf' AND metadata->>'mimetype' = 'application/pdf')
+      OR (LOWER(storage.extension(name)) = 'png' AND metadata->>'mimetype' = 'image/png')
+      OR (LOWER(storage.extension(name)) IN ('jpg', 'jpeg') AND metadata->>'mimetype' IN ('image/jpeg', 'image/jpg'))
+      OR (LOWER(storage.extension(name)) = 'webp' AND metadata->>'mimetype' = 'image/webp')
+      OR (LOWER(storage.extension(name)) = 'docx' AND metadata->>'mimetype' IN ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip'))
+      OR (LOWER(storage.extension(name)) = 'xlsx' AND metadata->>'mimetype' IN ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip'))
+      OR (LOWER(storage.extension(name)) = 'doc' AND metadata->>'mimetype' = 'application/msword')
+      OR (LOWER(storage.extension(name)) = 'xls' AND metadata->>'mimetype' = 'application/vnd.ms-excel')
+    )
+    -- 4. Boyut Sınırı: Maksimum 25MB
+    AND (
+      metadata->>'size' IS NULL 
+      OR (metadata->>'size')::bigint <= 26214400
+    )
   );
 
 DROP POLICY IF EXISTS "kanit_dosyalari_insert" ON storage.objects;
@@ -99,10 +134,29 @@ CREATE POLICY "kanit_dosyalari_insert" ON storage.objects
   FOR INSERT TO authenticated 
   WITH CHECK (
     bucket_id = 'kanit_dosyalari' 
-    AND LOWER(storage.extension(name)) IN ('pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx', 'zip')
+    -- 1. Uzantı Doğrulaması
+    AND LOWER(storage.extension(name)) IN ('pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx', 'doc', 'xls')
+    -- 2. Çift uzantı ve çalıştırılabilir dosya koruması (polyglot engeli)
+    AND name !~* '\.(exe|bat|cmd|sh|php|phtml|jsp|asp|aspx|cgi|pl|py|js|vbs|jar)\.'
+    -- 3. Gerçek MIME Türü Doğrulaması (metadata->>mimetype)
+    AND (
+      (LOWER(storage.extension(name)) = 'pdf' AND metadata->>'mimetype' = 'application/pdf')
+      OR (LOWER(storage.extension(name)) = 'png' AND metadata->>'mimetype' = 'image/png')
+      OR (LOWER(storage.extension(name)) IN ('jpg', 'jpeg') AND metadata->>'mimetype' IN ('image/jpeg', 'image/jpg'))
+      OR (LOWER(storage.extension(name)) = 'webp' AND metadata->>'mimetype' = 'image/webp')
+      OR (LOWER(storage.extension(name)) = 'docx' AND metadata->>'mimetype' IN ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip'))
+      OR (LOWER(storage.extension(name)) = 'xlsx' AND metadata->>'mimetype' IN ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip'))
+      OR (LOWER(storage.extension(name)) = 'doc' AND metadata->>'mimetype' = 'application/msword')
+      OR (LOWER(storage.extension(name)) = 'xls' AND metadata->>'mimetype' = 'application/vnd.ms-excel')
+    )
+    -- 4. Boyut Sınırı: Maksimum 25MB
+    AND (
+      metadata->>'size' IS NULL 
+      OR (metadata->>'size')::bigint <= 26214400
+    )
   );
 
--- C. Güncelleme ve Silme: YALNIZCA DOSYANIN SAHİBİ (OWNER) VEYA YÖNETİCİ
+-- D. Güncelleme ve Silme: YALNIZCA DOSYANIN SAHİBİ (OWNER) VEYA YÖNETİCİ
 DROP POLICY IF EXISTS "dokumanlar_update" ON storage.objects;
 CREATE POLICY "dokumanlar_update" ON storage.objects 
   FOR UPDATE TO authenticated 
@@ -148,6 +202,14 @@ CREATE POLICY "kanit_dosyalari_delete" ON storage.objects
   );
 
 -- 5. ANONİM ANKET SUNUCU TARAFI (SERVER-SIDE) RATE LIMIT VE GÜVENLİK
+-- A. Kolon Ekleme (Oturum / Kişi ve Güvenli IP Hash takibi)
+ALTER TABLE public.anket_cevaplari ADD COLUMN IF NOT EXISTS session_token TEXT;
+ALTER TABLE public.anket_cevaplari ADD COLUMN IF NOT EXISTS ip_hash TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_anket_cevaplari_session ON public.anket_cevaplari(anket_id, session_token, katilim_tarihi);
+CREATE INDEX IF NOT EXISTS idx_anket_cevaplari_ip_hash ON public.anket_cevaplari(anket_id, ip_hash, katilim_tarihi);
+
+-- B. Rate Limit ve DoS Engelleme Fonksiyonu
 CREATE OR REPLACE FUNCTION public.rate_limit_anket_cevaplari()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -156,19 +218,32 @@ BEGIN
     RAISE EXCEPTION 'Geçersiz anket IDsi.';
   END IF;
 
-  -- 2. Cevaplar JSON kontrolü (Boş veya aşırı büyük JSON engeli)
+  -- 2. Cevaplar JSON kontrolü (Boş veya aşırı büyük JSON engeli, max 64KB)
   IF NEW.cevaplar IS NULL OR pg_column_size(NEW.cevaplar) > 65536 THEN
     RAISE EXCEPTION 'Geçersiz veya aşırı büyük anket verisi.';
   END IF;
 
-  -- 3. Sunucu Tarafı Flood Koruması: Aynı anket_id için son 1 saniyede ekleme yapılmışsa bekle
-  IF EXISTS (
+  -- 3. Kişi / Oturum bazlı flood engeli (Aynı session_token son 15 saniyede aynı ankete cevap vermişse engelle)
+  IF NEW.session_token IS NOT NULL AND EXISTS (
     SELECT 1 FROM public.anket_cevaplari
     WHERE anket_id = NEW.anket_id
-    AND katilim_tarihi > (NOW() - INTERVAL '1 second')
+    AND session_token = NEW.session_token
+    AND katilim_tarihi > (NOW() - INTERVAL '15 seconds')
   ) THEN
-    RAISE EXCEPTION 'Aşırı istek algılandı. Lütfen birkaç saniye sonra tekrar deneyin.';
+    RAISE EXCEPTION 'Bu cihazdan/oturumdan çok sık yanıt gönderildi. Lütfen 15 saniye bekleyin.';
   END IF;
+
+  -- 4. IP Hash bazlı flood engeli (Aynı IP hash son 1 dakikada 5''ten fazla yanıt gönderemez)
+  IF NEW.ip_hash IS NOT NULL AND (
+    SELECT COUNT(*) FROM public.anket_cevaplari
+    WHERE anket_id = NEW.anket_id
+    AND ip_hash = NEW.ip_hash
+    AND katilim_tarihi > (NOW() - INTERVAL '1 minute')
+  ) >= 5 THEN
+    RAISE EXCEPTION 'Aynı ağdan/IP adresinden kısa sürede çok fazla yanıt gönderildi. Lütfen biraz bekleyin.';
+  END IF;
+
+  -- NOT: Global anket kilidi tamamen kaldırılmıştır. Farklı kullanıcıların aynı anda yanıt göndermesi engellenmez (DoS korumalı).
 
   RETURN NEW;
 END;
@@ -190,5 +265,5 @@ CREATE POLICY "anket_cevaplari_insert" ON public.anket_cevaplari
 -- 6. TAMAMLANMA BİLDİRİMİ
 DO $$
 BEGIN
-  RAISE NOTICE 'Tam güvenlik sertleştirme paketi başarıyla yüklendi. Tüm açıklar kapatıldı.';
+  RAISE NOTICE 'Tam güvenlik sertleştirme paketi (v2 - DoS & MIME & Bucket Privacy) başarıyla yüklendi.';
 END $$;

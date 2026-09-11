@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import DOMPurify from 'dompurify';
+import { supabase } from '@/lib/supabase/client';
 import { X, Download, FileText, Image as ImageIcon, ExternalLink, Loader2 } from 'lucide-react';
 
 export default function GlobalFileViewer() {
@@ -29,8 +30,6 @@ export default function GlobalFileViewer() {
         if ((isPdf || isImage || isDocx) && !isDownload) {
           e.preventDefault();
           e.stopPropagation();
-          setViewerUrl(url);
-          setViewerType(isPdf ? 'pdf' : isDocx ? 'docx' : 'image');
 
           let name = 'Doküman';
           try {
@@ -38,7 +37,30 @@ export default function GlobalFileViewer() {
             name = decoded.substring(decoded.lastIndexOf('/') + 1).split(/[?#]/)[0];
           } catch (_) {}
           setViewerName(name);
-          setIsOpen(true);
+          setViewerType(isPdf ? 'pdf' : isDocx ? 'docx' : 'image');
+
+          // Private Bucket Desteği: İmzalı URL (Signed URL) ile güvenli erişim sağla
+          const resolveAndOpen = async () => {
+            let finalUrl = url;
+            if (url.includes('/storage/v1/object/')) {
+              try {
+                const parts = url.split('/storage/v1/object/');
+                const afterObject = parts[1]?.replace(/^public\//, '')?.replace(/^sign\//, '') || '';
+                const [bucket, ...pathParts] = afterObject.split('?')[0].split('/');
+                const filePath = pathParts.join('/');
+                if (bucket && filePath) {
+                  const { data } = await supabase.storage.from(bucket).createSignedUrl(decodeURIComponent(filePath), 3600);
+                  if (data?.signedUrl) finalUrl = data.signedUrl;
+                }
+              } catch (signErr) {
+                console.warn('Signed URL alınamadı, orijinal URL deneniyor:', signErr);
+              }
+            }
+            setViewerUrl(finalUrl);
+            setIsOpen(true);
+          };
+
+          resolveAndOpen();
         }
       }
     };

@@ -11,6 +11,7 @@ import { usePeriod } from '@/contexts/PeriodContext';
 import RichTextEditor, { RichTextEditorRef } from '@/components/RichTextEditor';
 import { logAction } from '@/lib/logger';
 import { validateFileSize, getAssignedLetter } from '@/lib/utils';
+import { validateUploadedFile } from '@/lib/fileValidation';
 
 interface OzdegerlendirmeRaporuClientProps {
   params: Promise<{ id: string }>;
@@ -581,7 +582,8 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
     
     const file = event.target.files[0];
     
-    const validation = validateFileSize(file);
+    // Güvenlik: Magic Byte, MIME, Uzantı, Çift Uzantı ve Boyut Denetimi
+    const validation = await validateUploadedFile(file);
     if (!validation.valid) {
       alert(validation.error);
       event.target.value = '';
@@ -591,15 +593,16 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
     setIsUploadingInText(true);
     
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${resolvedParams.id}_evidence_${Math.random()}.${fileExt}`;
+      const fileExt = file.name.split('.').pop()?.toLowerCase();
+      const fileName = `${resolvedParams.id}_evidence_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
       const filePath = `ozdegerlendirme/${fileName}`;
 
       const { error: uploadError } = await supabase.storage.from('dokumanlar').upload(filePath, file);
       if (uploadError) throw uploadError;
 
-      const { data: publicUrlData } = supabase.storage.from('dokumanlar').getPublicUrl(filePath);
-      const publicUrl = publicUrlData.publicUrl;
+      // Güvenli İmzalı URL Üret (Private Bucket Koruması)
+      const { data: signData } = await supabase.storage.from('dokumanlar').createSignedUrl(filePath, 315360000);
+      const publicUrl = signData?.signedUrl || supabase.storage.from('dokumanlar').getPublicUrl(filePath).data.publicUrl;
 
       const yeniKanit = { 
         name: newEvidenceName, 

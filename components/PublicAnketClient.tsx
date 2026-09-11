@@ -101,15 +101,38 @@ export default function PublicAnketClient({ params }: PublicAnketClientProps) {
       return;
     }
 
+    // 5. Cihaz / Oturum Belirteci (Session Token)
+    let sessionToken = '';
+    try {
+      sessionToken = localStorage.getItem('abys_respondent_token') || '';
+      if (!sessionToken) {
+        sessionToken = (typeof crypto !== 'undefined' && crypto.randomUUID) 
+          ? crypto.randomUUID() 
+          : `sess_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
+        localStorage.setItem('abys_respondent_token', sessionToken);
+      }
+    } catch (_) {}
+
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.from('anket_cevaplari').insert({
-        anket_id: anket.id,
-        cevaplar: cevaplar
+      // Güvenli Sunucu Tarafı (Server-Side) IP & Oturum Rate-Limit API'si üzerinden gönderim
+      const res = await fetch('/api/anket/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          anket_id: anket.id,
+          cevaplar: cevaplar,
+          session_token: sessionToken,
+          websiteHoney: websiteHoney
+        })
       });
 
-      if (error) throw error;
-      
+      const resJson = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(resJson.error || `İşlem başarısız oldu (${res.status})`);
+      }
+
       try {
         localStorage.setItem(cooldownKey, Date.now().toString());
       } catch (_) {}

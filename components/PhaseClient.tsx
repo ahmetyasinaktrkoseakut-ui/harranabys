@@ -10,6 +10,7 @@ import StepPanel from '@/components/StepPanel';
 import RichTextEditor, { RichTextEditorRef } from '@/components/RichTextEditor';
 import { getLocalizedField } from '@/lib/i18n-utils';
 import { validateFileSize, getAssignedLetter } from '@/lib/utils';
+import { validateUploadedFile } from '@/lib/fileValidation';
 import { usePeriod } from '@/contexts/PeriodContext';
 import EvidenceAnnotatorModal from '@/components/EvidenceAnnotatorModal';
 import { useRef } from 'react';
@@ -627,7 +628,8 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
     if (!event.target.files || event.target.files.length === 0) return;
     const file = event.target.files[0];
     
-    const validation = validateFileSize(file);
+    // Güvenlik: Magic Byte, MIME, Uzantı, Çift Uzantı ve Boyut Denetimi
+    const validation = await validateUploadedFile(file);
     if (!validation.valid) {
       alert(validation.error);
       event.target.value = '';
@@ -636,15 +638,17 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
 
     setUploadingDoc(true);
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${resolvedParams.id}_${phaseId}_${Math.random()}.${fileExt}`;
+      const fileExt = file.name.split('.').pop()?.toLowerCase();
+      const fileName = `${resolvedParams.id}_${phaseId}_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
       const filePath = `${fileName}`;
 
       const { data, error } = await supabase.storage.from('dokumanlar').upload(filePath, file);
 
       if (error) throw error;
 
-      const { data: publicUrlData } = supabase.storage.from('dokumanlar').getPublicUrl(filePath);
+      // Güvenli İmzalı URL Üret (Private Bucket Koruması)
+      const { data: signData } = await supabase.storage.from('dokumanlar').createSignedUrl(filePath, 315360000);
+      const fileUrl = signData?.signedUrl || supabase.storage.from('dokumanlar').getPublicUrl(filePath).data.publicUrl;
 
       const evId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ev_${Math.random().toString(36).substring(2, 9)}`;
       const newDocNo = previousDocsCount + dokumanlar.length + 1;
@@ -653,7 +657,7 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
         evidence_id: evId,
         evidence_no: newDocNo,
         name: file.name,
-        url: publicUrlData.publicUrl,
+        url: fileUrl,
         size: Math.round(file.size / 1024)
       };
 
