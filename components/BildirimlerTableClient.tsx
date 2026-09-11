@@ -147,22 +147,30 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
     setModalError(null);
 
     try {
-      const fileExt = file.name.split('.').pop()?.toLowerCase();
-      // 1. Upload new file
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
-      
-      const { error: uploadError } = await supabase.storage
-        .from('kanit_dosyalari')
-        .upload(fileName, file);
+      // Sunucu taraflı güvenli yükleme (/api/storage/upload)
+      const uploadFormData = new FormData();
+      uploadFormData.append('file', file);
+      uploadFormData.append('bucket', 'kanit_dosyalari');
+      uploadFormData.append('resource_type', 'bildirim_revizyon');
+      if (selectedRow.alt_olcut_id) {
+        uploadFormData.append('alt_olcut_id', String(selectedRow.alt_olcut_id));
+      }
+      if (selectedRow.donem_id) {
+        uploadFormData.append('donem_id', String(selectedRow.donem_id));
+      }
+      uploadFormData.append('resource_id', String(selectedRow.id));
 
-      if (uploadError) throw new Error(t('modal.upload_error') + ': ' + uploadError.message);
+      const uploadRes = await fetch('/api/storage/upload', {
+        method: 'POST',
+        body: uploadFormData
+      });
 
-      // Güvenli İmzalı URL Üret (Private Bucket Koruması)
-      const { data: signData } = await supabase.storage
-        .from('kanit_dosyalari')
-        .createSignedUrl(fileName, 315360000);
-        
-      const fileUrl = signData?.signedUrl || supabase.storage.from('kanit_dosyalari').getPublicUrl(fileName).data.publicUrl;
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok || !uploadData.success) {
+        throw new Error(uploadData.error || t('modal.upload_error'));
+      }
+
+      const fileUrl = uploadData.url;
 
       // 2. Update database record
       const { error: dbError } = await supabase

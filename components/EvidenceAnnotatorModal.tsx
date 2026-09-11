@@ -24,6 +24,8 @@ interface EvidenceAnnotatorModalProps {
   docIndex: number;
   onSaveAnnotatedDoc: (updatedDoc: EvidenceDoc, oldUrlToDelete?: string) => void;
   isReadOnly?: boolean;
+  altOlcutId?: string | number;
+  donemId?: string | number;
 }
 
 export default function EvidenceAnnotatorModal({
@@ -33,6 +35,8 @@ export default function EvidenceAnnotatorModal({
   docIndex,
   onSaveAnnotatedDoc,
   isReadOnly = false,
+  altOlcutId,
+  donemId,
 }: EvidenceAnnotatorModalProps) {
   const [highlightNote, setHighlightNote] = useState('');
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -131,17 +135,33 @@ export default function EvidenceAnnotatorModal({
 
   const getSecureUrl = async (url: string) => {
     if (!url) return '';
+    let bucket = 'dokumanlar';
+    let filePath = '';
+
     if (url.includes('/storage/v1/object/')) {
+      const parts = url.split('/storage/v1/object/');
+      const afterObject = parts[1]?.replace(/^public\//, '')?.replace(/^sign\//, '') || '';
+      const [b, ...pathParts] = afterObject.split('?')[0].split('/');
+      bucket = b;
+      filePath = pathParts.join('/');
+    } else if (url.includes('/api/storage/')) {
+      const parts = url.split('/api/storage/')[1]?.split('?')[0].split('/');
+      bucket = parts[0];
+      filePath = parts.slice(1).join('/');
+    }
+
+    if (bucket && filePath) {
+      const proxyUrl = `/api/storage/${bucket}/${filePath}`;
       try {
-        const parts = url.split('/storage/v1/object/');
-        const afterObject = parts[1]?.replace(/^public\//, '')?.replace(/^sign\//, '') || '';
-        const [bucket, ...pathParts] = afterObject.split('?')[0].split('/');
-        const filePath = pathParts.join('/');
-        if (bucket && filePath) {
-          const { data } = await supabase.storage.from(bucket).createSignedUrl(decodeURIComponent(filePath), 3600);
-          if (data?.signedUrl) return data.signedUrl;
+        const probe = await fetch(proxyUrl, { method: 'HEAD' });
+        if (probe.status === 200) {
+          return proxyUrl;
         }
-      } catch (_) {}
+        // KESİN KURAL: Proxy 200 dönmezse (401, 403, 404, vb.) ASLA public URL veya eski signed URL kullanılmaz!
+        throw new Error('Erişim Reddedildi: Bu dosyayı görüntüleme yetkiniz bulunmamaktadır.');
+      } catch (err: any) {
+        throw new Error(err?.message || 'Dosya erişim doğrulaması başarısız oldu.');
+      }
     }
     return url;
   };
@@ -365,6 +385,32 @@ export default function EvidenceAnnotatorModal({
     setHistory(newHistory);
   };
 
+  const uploadViaServer = async (fileBlob: Blob | File, fileName: string) => {
+    const uploadFormData = new FormData();
+    uploadFormData.append('file', fileBlob, fileName);
+    uploadFormData.append('bucket', 'dokumanlar');
+    uploadFormData.append('resource_type', 'puko');
+    
+    let targetAltOlcutId = altOlcutId;
+    if (!targetAltOlcutId && doc?.url) {
+      const match = doc.url.match(/\/(\d+)_[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+$/);
+      if (match) targetAltOlcutId = match[1];
+    }
+    if (targetAltOlcutId) uploadFormData.append('alt_olcut_id', String(targetAltOlcutId));
+    if (donemId) uploadFormData.append('donem_id', String(donemId));
+
+    const uploadRes = await fetch('/api/storage/upload', {
+      method: 'POST',
+      body: uploadFormData
+    });
+
+    const uploadData = await uploadRes.json();
+    if (!uploadRes.ok || !uploadData.success) {
+      throw new Error(uploadData.error || 'Dosya sunucuya yüklenirken hata oluştu.');
+    }
+    return uploadData.url;
+  };
+
   const handleSaveAnnotated = async () => {
     setIsSaving(true);
     try {
@@ -381,15 +427,8 @@ export default function EvidenceAnnotatorModal({
           return;
         }
 
-        const fileExt = replacementFile.name.split('.').pop()?.toLowerCase();
         oldUrlToDelete = doc.url;
-        const newFileName = `duzeltilmis_${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const { error: uploadError } = await supabase.storage.from('dokumanlar').upload(newFileName, replacementFile);
-        if (uploadError) throw uploadError;
-
-        // Güvenli İmzalı URL Üret (Private Bucket Koruması)
-        const { data: signData } = await supabase.storage.from('dokumanlar').createSignedUrl(newFileName, 315360000);
-        finalUrl = signData?.signedUrl || supabase.storage.from('dokumanlar').getPublicUrl(newFileName).data.publicUrl;
+        finalUrl = await uploadViaServer(replacementFile, replacementFile.name);
       } 
       // 2. Export Word Document Drawing using html2canvas
       else if (isOfficeDoc && wordContainerRef.current && (window as any).html2canvas) {
@@ -399,11 +438,7 @@ export default function EvidenceAnnotatorModal({
         if (blob) {
           const cleanName = doc.name.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/\.[^/.]+$/, '');
           const newFileName = `isaretli_word_${Date.now()}_${cleanName}.png`;
-          const { error: uploadError } = await supabase.storage.from('dokumanlar').upload(newFileName, blob);
-          if (uploadError) throw uploadError;
-
-          const { data: publicUrlData } = supabase.storage.from('dokumanlar').getPublicUrl(newFileName);
-          finalUrl = publicUrlData.publicUrl;
+          finalUrl = await uploadViaServer(blob, newFileName);
         }
       }
       // 3. Export PDF drawing embedded on target page preserving all pages using pdf-lib
@@ -437,11 +472,7 @@ export default function EvidenceAnnotatorModal({
           const pdfBlob = new Blob([modifiedPdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
           const newFileName = `isaretli_${Date.now()}_${cleanName}.pdf`;
 
-          const { error: uploadError } = await supabase.storage.from('dokumanlar').upload(newFileName, pdfBlob);
-          if (uploadError) throw uploadError;
-
-          const { data: publicUrlData } = supabase.storage.from('dokumanlar').getPublicUrl(newFileName);
-          finalUrl = publicUrlData.publicUrl;
+          finalUrl = await uploadViaServer(pdfBlob, newFileName);
         } catch (pdfErr: any) {
           console.error("PDF embedding error:", pdfErr);
           alert(`PDF katmanlama hatası oluştu: ${pdfErr?.message || pdfErr}. İşlem iptal edildi.`);
@@ -465,11 +496,7 @@ export default function EvidenceAnnotatorModal({
           oldUrlToDelete = doc.url;
           const cleanName = doc.name.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/\.[^/.]+$/, '');
           const newFileName = `isaretli_${Date.now()}_${cleanName}.png`;
-          const { error: uploadError } = await supabase.storage.from('dokumanlar').upload(newFileName, blob);
-          if (uploadError) throw uploadError;
-
-          const { data: publicUrlData } = supabase.storage.from('dokumanlar').getPublicUrl(newFileName);
-          finalUrl = publicUrlData.publicUrl;
+          finalUrl = await uploadViaServer(blob, newFileName);
         }
       }
 

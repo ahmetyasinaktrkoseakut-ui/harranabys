@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { supabase } from '@/lib/supabase/client';
-import { X, Download, FileText, Image as ImageIcon, ExternalLink, Loader2 } from 'lucide-react';
+import { X, Download, FileText, Image as ImageIcon, ExternalLink, Loader2, AlertTriangle } from 'lucide-react';
 
 export default function GlobalFileViewer() {
   const [isOpen, setIsOpen] = useState(false);
@@ -12,6 +12,7 @@ export default function GlobalFileViewer() {
   const [viewerName, setViewerName] = useState('');
   const [wordHtml, setWordHtml] = useState<string>('');
   const [loadingDocx, setLoadingDocx] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
     const handleGlobalClick = (e: MouseEvent) => {
@@ -39,24 +40,59 @@ export default function GlobalFileViewer() {
           setViewerName(name);
           setViewerType(isPdf ? 'pdf' : isDocx ? 'docx' : 'image');
 
-          // Private Bucket Desteği: İmzalı URL (Signed URL) ile güvenli erişim sağla
+          // Private Bucket Desteği: Yetkili Proxy rotası üzerinden erişim sağla
           const resolveAndOpen = async () => {
-            let finalUrl = url;
-            if (url.includes('/storage/v1/object/')) {
+            setAuthError(null);
+
+            if (url.includes('/storage/v1/object/') || url.includes('/api/storage/')) {
               try {
-                const parts = url.split('/storage/v1/object/');
-                const afterObject = parts[1]?.replace(/^public\//, '')?.replace(/^sign\//, '') || '';
-                const [bucket, ...pathParts] = afterObject.split('?')[0].split('/');
-                const filePath = pathParts.join('/');
-                if (bucket && filePath) {
-                  const { data } = await supabase.storage.from(bucket).createSignedUrl(decodeURIComponent(filePath), 3600);
-                  if (data?.signedUrl) finalUrl = data.signedUrl;
+                let bucket = 'dokumanlar';
+                let filePath = '';
+                if (url.includes('/storage/v1/object/')) {
+                  const parts = url.split('/storage/v1/object/');
+                  const afterObject = parts[1]?.replace(/^public\//, '')?.replace(/^sign\//, '') || '';
+                  const [b, ...pathParts] = afterObject.split('?')[0].split('/');
+                  bucket = b;
+                  filePath = pathParts.join('/');
+                } else if (url.includes('/api/storage/')) {
+                  const parts = url.split('/api/storage/')[1]?.split('?')[0].split('/');
+                  bucket = parts[0];
+                  filePath = parts.slice(1).join('/');
                 }
-              } catch (signErr) {
-                console.warn('Signed URL alınamadı, orijinal URL deneniyor:', signErr);
+
+                if (bucket && filePath) {
+                  const proxyUrl = `/api/storage/${bucket}/${filePath}`;
+                  // Probe proxy for authorization (Gerçek HEAD denetimi)
+                  const probe = await fetch(proxyUrl, { method: 'HEAD' });
+
+                  if (probe.status === 200) {
+                    setViewerUrl(proxyUrl);
+                    setIsOpen(true);
+                    return;
+                  } else if (probe.status === 401 || probe.status === 403) {
+                    // KESİN KURAL: Proxy 200 değilse ASLA public URL veya eski signed URL kullanılmaz!
+                    setAuthError('Erişim Reddedildi: Bu dosyayı görüntüleme yetkiniz bulunmamaktadır.');
+                    setViewerUrl('');
+                    setIsOpen(true);
+                    return;
+                  } else {
+                    setAuthError('Dosyaya erişilemedi veya dosya bulunamadı.');
+                    setViewerUrl('');
+                    setIsOpen(true);
+                    return;
+                  }
+                }
+              } catch (err) {
+                console.error('Proxy yetki kontrolü hatası:', err);
+                setAuthError('Dosya güvenlik doğrulaması yapılamadı.');
+                setViewerUrl('');
+                setIsOpen(true);
+                return;
               }
             }
-            setViewerUrl(finalUrl);
+
+            // Storage dışı URL (ör. harici bağlantı)
+            setViewerUrl(url);
             setIsOpen(true);
           };
 
@@ -144,23 +180,27 @@ export default function GlobalFileViewer() {
             </h4>
           </div>
           <div className="flex items-center gap-2">
-            <a 
-              href={viewerUrl} 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="p-2 hover:bg-slate-100 dark:hover:bg-[#1e2d4a] rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-colors flex items-center gap-1.5 text-xs font-bold"
-              title="Yeni Sekmede Aç"
-            >
-              <ExternalLink className="w-4 h-4" /> Yeni Sekmede Aç
-            </a>
-            <button 
-              onClick={handleDownload}
-              className="p-2 hover:bg-slate-100 dark:hover:bg-[#1e2d4a] rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold"
-              title="İndir"
-            >
-              <Download className="w-4 h-4" /> İndir
-            </button>
-            <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 mx-1"></div>
+            {!authError && (
+              <>
+                <a 
+                  href={viewerUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="p-2 hover:bg-slate-100 dark:hover:bg-[#1e2d4a] rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-colors flex items-center gap-1.5 text-xs font-bold"
+                  title="Yeni Sekmede Aç"
+                >
+                  <ExternalLink className="w-4 h-4" /> Yeni Sekmede Aç
+                </a>
+                <button 
+                  onClick={handleDownload}
+                  className="p-2 hover:bg-slate-100 dark:hover:bg-[#1e2d4a] rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                  title="İndir"
+                >
+                  <Download className="w-4 h-4" /> İndir
+                </button>
+                <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 mx-1"></div>
+              </>
+            )}
             <button 
               onClick={() => setIsOpen(false)}
               className="p-2 hover:bg-slate-100 dark:hover:bg-[#1e2d4a] rounded-xl text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer"
@@ -172,7 +212,17 @@ export default function GlobalFileViewer() {
 
         {/* Content Preview */}
         <div className="flex-1 bg-slate-900/5 dark:bg-black/30 overflow-auto p-4 flex items-center justify-center min-h-[400px]">
-          {viewerType === 'image' ? (
+          {authError ? (
+            <div className="flex flex-col items-center justify-center p-12 text-center max-w-md">
+              <div className="w-16 h-16 rounded-2xl bg-red-100 dark:bg-red-950/50 flex items-center justify-center text-red-600 dark:text-red-400 mb-4 shadow-inner">
+                <AlertTriangle className="w-8 h-8" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-2">Yetkisiz Belge Erişimi</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                {authError}
+              </p>
+            </div>
+          ) : viewerType === 'image' ? (
             <img 
               src={viewerUrl} 
               alt={viewerName} 

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
+import net from 'net';
 
-// Bellek ici IP ve Oturum Rate Limiting Takibi (Kayan Pencere / Sliding Window)
+// Bellek ici IP ve Oturum Rate Limiting Takibi (Kayan Pencere / Fast-Path)
 interface RateRecord {
   timestamps: number[];
   lastSubmit: number;
@@ -29,6 +30,26 @@ if (typeof setInterval !== 'undefined') {
   }, 600000);
 }
 
+function getTrustedClientIp(request: Request): string | null {
+  // 1. Cloudflare Edge
+  const cfIp = request.headers.get('cf-connecting-ip');
+  if (cfIp && net.isIP(cfIp.trim()) !== 0) return cfIp.trim();
+
+  // 2. Vercel Platform Edge
+  const vercelIp = request.headers.get('x-vercel-forwarded-for');
+  if (vercelIp) {
+    const candidate = vercelIp.split(',')[0].trim();
+    if (net.isIP(candidate) !== 0) return candidate;
+  }
+
+  // 3. Nginx / Ters Vekil Real-IP
+  const realIp = request.headers.get('x-real-ip');
+  if (realIp && net.isIP(realIp.trim()) !== 0) return realIp.trim();
+
+  // Guvenilir IP yoksa NULL donulur (ortak unverified_edge atanmaz; global DoS onlenir)
+  return null;
+}
+
 export async function POST(request: Request) {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -38,16 +59,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Sistem veritabani ayarlari eksik.' }, { status: 500 });
     }
 
-    // 1. Istemci IP ve Oturum Belirteci Cikarma
-    const forwardedFor = request.headers.get('x-forwarded-for');
-    const realIp = request.headers.get('x-real-ip');
-    const clientIp = (forwardedFor ? forwardedFor.split(',')[0].trim() : realIp) || '127.0.0.1';
-
-    // KVKK/GDPR Uyumlu Kriptografik IP Hash (Gercek IP saklanmaz)
-    const ipHash = crypto
-      .createHash('sha256')
-      .update(clientIp + (process.env.SUPABASE_SERVICE_ROLE_KEY || 'abys_salt_survey'))
-      .digest('hex');
+    // 1. Istemci IP tespiti (Doğrulanmış proxy başlıkları ile)
+    const trustedIp = getTrustedClientIp(request);
+    const ipHash = trustedIp
+      ? crypto.createHash('sha256').update(trustedIp + (supabaseServiceKey || 'abys_salt')).digest('hex')
+      : null;
 
     // 2. Request Govdesini Ayristir
     const body = await request.json();
@@ -62,7 +78,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Gecersiz anket veya yanit verisi.' }, { status: 400 });
     }
 
-    // 3. Payload Boyut Guvenligi (Maksimum 64KB)
+    // 3. Zorunlu Oturum / Cihaz Belirteci Denetimi
+    const safeSessionToken = session_token && typeof session_token === 'string' && session_token.trim() !== ''
+      ? session_token.trim().substring(0, 64)
+      : null;
+
+    if (!safeSessionToken) {
+      return NextResponse.json({ error: 'Gecersiz oturum belirteci. Lutfen sayfayi yenileyiniz.' }, { status: 400 });
+    }
+
+    // 4. Payload Boyut Guvenligi (Maksimum 64KB)
     const payloadSize = Buffer.byteLength(JSON.stringify(cevaplar), 'utf8');
     if (payloadSize > 65536) {
       return NextResponse.json({ error: 'Anket yanit verisi boyutu izin verilen siniri (64KB) asiyor.' }, { status: 413 });
@@ -70,37 +95,88 @@ export async function POST(request: Request) {
 
     const now = Date.now();
 
-    // 4. IP Bazli Rate Limit Denetimi (Dakikada en fazla 5 yanit)
-    let ipRecord = ipRateMap.get(ipHash);
-    if (!ipRecord) {
-      ipRecord = { timestamps: [], lastSubmit: 0 };
-      ipRateMap.set(ipHash, ipRecord);
-    }
-    ipRecord.timestamps = ipRecord.timestamps.filter(t => now - t < 60000);
-
-    if (ipRecord.timestamps.length >= 5) {
-      return NextResponse.json(
-        { error: 'Ayni ag uzerinden kisa surede cok fazla yanit gonderildi. Lutfen bir dakika bekleyin.' },
-        { status: 429 }
-      );
-    }
-
-    // 5. Oturum / Cihaz Bazli Rate Limit Denetimi (En az 15 saniye bekleme)
-    const safeSessionToken = session_token ? String(session_token).substring(0, 64) : null;
-    if (safeSessionToken) {
-      const lastSessionSubmit = sessionRateMap.get(safeSessionToken) || 0;
-      if (now - lastSessionSubmit < 15000) {
+    // 5. Fast-Path Bellekici Denetimler
+    if (ipHash) {
+      let ipRecord = ipRateMap.get(ipHash);
+      if (!ipRecord) {
+        ipRecord = { timestamps: [], lastSubmit: 0 };
+        ipRateMap.set(ipHash, ipRecord);
+      }
+      ipRecord.timestamps = ipRecord.timestamps.filter(t => now - t < 60000);
+      if (ipRecord.timestamps.length >= 5) {
         return NextResponse.json(
-          { error: 'Bu oturumdan cok sik yanit gonderildi. Lutfen 15 saniye sonra tekrar deneyin.' },
+          { error: 'Ayni ag uzerinden kisa surede cok fazla yanit gonderildi. Lutfen bir dakika bekleyin.' },
           { status: 429 }
         );
       }
     }
 
-    // 6. Veritabanina Ekleme (Admin/Service Role Ile Guvenli Eklenir)
+    const lastSessionSubmit = sessionRateMap.get(safeSessionToken) || 0;
+    if (now - lastSessionSubmit < 15000) {
+      return NextResponse.json(
+        { error: 'Bu oturumdan cok sik yanit gonderildi. Lutfen 15 saniye sonra tekrar deneyin.' },
+        { status: 429 }
+      );
+    }
+
+    // 6. Atomik Veritabani Rate Limit Denetimi (RPC) - FAIL CLOSE
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Anketin mevcut olup olmadigini dogrula
+    // A. IP Bazlı Atomik Sayac Denetimi (Eger dogrulanmis IP varsa)
+    if (ipHash) {
+      try {
+        const { data: ipAllowed, error: ipRpcErr } = await supabaseAdmin.rpc('check_and_increment_anket_rate_limit', {
+          p_key_type: 'ip',
+          p_key_value: ipHash,
+          p_anket_id: anket_id,
+          p_window_seconds: 60,
+          p_max_requests: 5
+        });
+
+        // FAIL CLOSE: RPC hatasında ASLA INSERT yapılmaz!
+        if (ipRpcErr) {
+          console.error('IP rate limit RPC hatasi:', ipRpcErr);
+          return NextResponse.json({ error: 'Guvenlik dogrulamasi gerceklestirilemedi. Islem durduruldu.' }, { status: 500 });
+        }
+        if (ipAllowed === false) {
+          return NextResponse.json(
+            { error: 'Ayni ag uzerinden kisa surede cok fazla yanit gonderildi. Lutfen bir dakika bekleyin.' },
+            { status: 429 }
+          );
+        }
+      } catch (rpcEx) {
+        console.error('IP RPC istisnasi:', rpcEx);
+        return NextResponse.json({ error: 'Guvenlik dogrulamasi istisnasi. Islem durduruldu.' }, { status: 500 });
+      }
+    }
+
+    // B. Oturum / Cihaz Bazlı Zorunlu Atomik Sayac Denetimi
+    try {
+      const { data: sessAllowed, error: sessRpcErr } = await supabaseAdmin.rpc('check_and_increment_anket_rate_limit', {
+        p_key_type: 'session',
+        p_key_value: safeSessionToken,
+        p_anket_id: anket_id,
+        p_window_seconds: 15,
+        p_max_requests: 1
+      });
+
+      // FAIL CLOSE: RPC hatasında ASLA INSERT yapılmaz!
+      if (sessRpcErr) {
+        console.error('Session rate limit RPC hatasi:', sessRpcErr);
+        return NextResponse.json({ error: 'Oturum guvenlik dogrulamasi gerceklestirilemedi. Islem durduruldu.' }, { status: 500 });
+      }
+      if (sessAllowed === false) {
+        return NextResponse.json(
+          { error: 'Bu oturumdan cok sik yanit gonderildi. Lutfen 15 saniye bekleyin.' },
+          { status: 429 }
+        );
+      }
+    } catch (rpcEx) {
+      console.error('Session RPC istisnasi:', rpcEx);
+      return NextResponse.json({ error: 'Oturum guvenlik dogrulamasi istisnasi. Islem durduruldu.' }, { status: 500 });
+    }
+
+    // 7. Anketin mevcut olup olmadigini dogrula
     const { data: anket, error: anketError } = await supabaseAdmin
       .from('anketler')
       .select('id, baslik')
@@ -111,13 +187,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Belirtilen anket bulunamadi veya kapatilmis.' }, { status: 404 });
     }
 
+    // 8. Yanıtı Ekle (ipHash yoksa kesinlikle NULL atanır, ortak sayaç oluşturulmaz)
     const { error: insertError } = await supabaseAdmin
       .from('anket_cevaplari')
       .insert({
         anket_id,
         cevaplar,
         session_token: safeSessionToken,
-        ip_hash: ipHash
+        ip_hash: ipHash || null
       });
 
     if (insertError) {
@@ -125,17 +202,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
 
-    // Basarili gonderim: sayaclari guncelle
-    ipRecord.timestamps.push(now);
-    ipRecord.lastSubmit = now;
-    if (safeSessionToken) {
-      sessionRateMap.set(safeSessionToken, now);
+    // Basarili gonderim: bellekici sayaclari da guncelle
+    if (ipHash) {
+      const rec = ipRateMap.get(ipHash);
+      if (rec) {
+        rec.timestamps.push(now);
+        rec.lastSubmit = now;
+      }
     }
+    sessionRateMap.set(safeSessionToken, now);
 
     return NextResponse.json({ success: true, message: 'Yanitiniz basariyla kaydedildi.' });
 
   } catch (error: any) {
-    console.error('Anket submit API hatasi:', error);
-    return NextResponse.json({ error: error?.message || 'Beklenmeyen sunucu hatasi.' }, { status: 500 });
+    console.error('Anket gonderim route hatasi:', error);
+    return NextResponse.json({ error: 'Sunucu hatasi olustu.' }, { status: 500 });
   }
 }

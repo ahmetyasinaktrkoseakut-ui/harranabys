@@ -638,17 +638,27 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
 
     setUploadingDoc(true);
     try {
-      const fileExt = file.name.split('.').pop()?.toLowerCase();
-      const fileName = `${resolvedParams.id}_${phaseId}_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
-      const filePath = `${fileName}`;
+      // Sunucu taraflı güvenli yükleme (/api/storage/upload)
+      const uploadFormData = new FormData();
+      uploadFormData.append('file', file);
+      uploadFormData.append('bucket', 'dokumanlar');
+      uploadFormData.append('resource_type', 'puko');
+      uploadFormData.append('alt_olcut_id', String(resolvedParams.id));
+      if (selectedPeriod?.id) {
+        uploadFormData.append('donem_id', String(selectedPeriod.id));
+      }
 
-      const { data, error } = await supabase.storage.from('dokumanlar').upload(filePath, file);
+      const uploadRes = await fetch('/api/storage/upload', {
+        method: 'POST',
+        body: uploadFormData
+      });
 
-      if (error) throw error;
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok || !uploadData.success) {
+        throw new Error(uploadData.error || t('upload_error'));
+      }
 
-      // Güvenli İmzalı URL Üret (Private Bucket Koruması)
-      const { data: signData } = await supabase.storage.from('dokumanlar').createSignedUrl(filePath, 315360000);
-      const fileUrl = signData?.signedUrl || supabase.storage.from('dokumanlar').getPublicUrl(filePath).data.publicUrl;
+      const fileUrl = uploadData.url;
 
       const evId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ev_${Math.random().toString(36).substring(2, 9)}`;
       const newDocNo = previousDocsCount + dokumanlar.length + 1;
@@ -1078,6 +1088,8 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
       docIndex={selectedDocForAnnotation?.index ?? -1}
       onSaveAnnotatedDoc={handleSaveAnnotatedDoc}
       isReadOnly={isReadOnly || annotatorReadOnly}
+      altOlcutId={resolvedParams.id}
+      donemId={selectedPeriod?.id}
     />
   </>
 );

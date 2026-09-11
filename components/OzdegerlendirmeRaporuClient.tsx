@@ -591,18 +591,28 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
     }
 
     setIsUploadingInText(true);
-    
     try {
-      const fileExt = file.name.split('.').pop()?.toLowerCase();
-      const fileName = `${resolvedParams.id}_evidence_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
-      const filePath = `ozdegerlendirme/${fileName}`;
+      // Sunucu taraflı güvenli yükleme (/api/storage/upload)
+      const uploadFormData = new FormData();
+      uploadFormData.append('file', file);
+      uploadFormData.append('bucket', 'dokumanlar');
+      uploadFormData.append('resource_type', 'ozdegerlendirme_raporu');
+      uploadFormData.append('alt_olcut_id', String(resolvedParams.id));
+      if (selectedPeriod?.id) {
+        uploadFormData.append('donem_id', String(selectedPeriod.id));
+      }
 
-      const { error: uploadError } = await supabase.storage.from('dokumanlar').upload(filePath, file);
-      if (uploadError) throw uploadError;
+      const uploadRes = await fetch('/api/storage/upload', {
+        method: 'POST',
+        body: uploadFormData
+      });
 
-      // Güvenli İmzalı URL Üret (Private Bucket Koruması)
-      const { data: signData } = await supabase.storage.from('dokumanlar').createSignedUrl(filePath, 315360000);
-      const publicUrl = signData?.signedUrl || supabase.storage.from('dokumanlar').getPublicUrl(filePath).data.publicUrl;
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok || !uploadData.success) {
+        throw new Error(uploadData.error || t('upload_error'));
+      }
+
+      const publicUrl = uploadData.url;
 
       const yeniKanit = { 
         name: newEvidenceName, 
