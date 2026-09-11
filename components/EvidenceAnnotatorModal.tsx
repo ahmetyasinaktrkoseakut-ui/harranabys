@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Loader2, X, Pencil, Trash2, Check, RefreshCw, Eye, FileText, Image as ImageIcon, Sparkles, Square, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 import { PDFDocument } from 'pdf-lib';
+import DOMPurify from 'dompurify';
 
 interface EvidenceDoc {
   name: string;
@@ -69,10 +70,12 @@ export default function EvidenceAnnotatorModal({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     
-    // Load PDF.js
+    // Load PDF.js with Subresource Integrity (SRI)
     if (!(window as any).pdfjsLib) {
       const pScript = document.createElement('script');
       pScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      pScript.crossOrigin = 'anonymous';
+      pScript.integrity = 'sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e';
       pScript.onload = () => {
         if ((window as any).pdfjsLib) {
           (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -84,10 +87,12 @@ export default function EvidenceAnnotatorModal({
       setPdfLibLoaded(true);
     }
 
-    // Load Mammoth.js for rich Word HTML conversion
+    // Load Mammoth.js for rich Word HTML conversion with SRI
     if (!(window as any).mammoth) {
       const mScript = document.createElement('script');
       mScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
+      mScript.crossOrigin = 'anonymous';
+      mScript.integrity = 'sha384-nFoSjZIoH3CCp8W639jJyQkuPHinJ2NHe7on1xvlUA7SuGfJAfvMldrsoAVm6ECz';
       mScript.onload = () => {
         setMammothLoaded(true);
       };
@@ -96,10 +101,12 @@ export default function EvidenceAnnotatorModal({
       setMammothLoaded(true);
     }
 
-    // Load html2canvas
+    // Load html2canvas with SRI
     if (!(window as any).html2canvas) {
       const hScript = document.createElement('script');
       hScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+      hScript.crossOrigin = 'anonymous';
+      hScript.integrity = 'sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H';
       hScript.onload = () => {
         setHtml2canvasLoaded(true);
       };
@@ -346,8 +353,20 @@ export default function EvidenceAnnotatorModal({
 
       // 1. Replacement file upload
       if (replacementFile) {
+        const fileExt = replacementFile.name.split('.').pop()?.toLowerCase();
+        const allowedExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx'];
+        if (!fileExt || !allowedExtensions.includes(fileExt)) {
+          alert('Geçersiz dosya uzantısı! Yalnızca PDF, Resim veya Office dokümanı yükleyebilirsiniz.');
+          setIsSaving(false);
+          return;
+        }
+        if (replacementFile.size > 25 * 1024 * 1024) {
+          alert('Dosya boyutu 25MB sınırını aşamaz.');
+          setIsSaving(false);
+          return;
+        }
+
         oldUrlToDelete = doc.url;
-        const fileExt = replacementFile.name.split('.').pop();
         const newFileName = `duzeltilmis_${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
         const { error: uploadError } = await supabase.storage.from('dokumanlar').upload(newFileName, replacementFile);
         if (uploadError) throw uploadError;
@@ -692,7 +711,7 @@ export default function EvidenceAnnotatorModal({
                     }
                   `}</style>
                   
-                  <div className="word-content" dangerouslySetInnerHTML={{ __html: wordHtml || `<p class="text-slate-400 italic">Word belgesi yükleniyor...</p>` }} />
+                  <div className="word-content" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(wordHtml || '') || `<p class="text-slate-400 italic">Word belgesi yükleniyor...</p>` }} />
 
                   {/* TRANSPARENT DRAWING OVERLAY CANVAS ON TOP OF WORD DOC */}
                   <canvas
@@ -746,9 +765,23 @@ export default function EvidenceAnnotatorModal({
                 <div className="p-2.5 bg-emerald-50/60 border border-dashed border-emerald-300 rounded-lg space-y-2">
                   <input
                     type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx"
                     onChange={e => {
                       if (e.target.files && e.target.files.length > 0) {
-                        setReplacementFile(e.target.files[0]);
+                        const selFile = e.target.files[0];
+                        const ext = selFile.name.split('.').pop()?.toLowerCase();
+                        const allowed = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx'];
+                        if (!ext || !allowed.includes(ext)) {
+                          alert('Geçersiz dosya formatı! Sadece PDF, Resim veya Office belgesi seçebilirsiniz.');
+                          e.target.value = '';
+                          return;
+                        }
+                        if (selFile.size > 25 * 1024 * 1024) {
+                          alert('Dosya boyutu en fazla 25MB olabilir.');
+                          e.target.value = '';
+                          return;
+                        }
+                        setReplacementFile(selFile);
                       }
                     }}
                     className="block w-full text-xs text-slate-700 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer"

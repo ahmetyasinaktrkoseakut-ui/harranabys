@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import DOMPurify from 'dompurify';
 import { X, Download, FileText, Image as ImageIcon, ExternalLink, Loader2 } from 'lucide-react';
 
 export default function GlobalFileViewer() {
@@ -55,12 +56,14 @@ export default function GlobalFileViewer() {
           if (!(window as any).mammoth) {
             const mScript = document.createElement('script');
             mScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
+            mScript.crossOrigin = 'anonymous';
+            mScript.integrity = 'sha384-nFoSjZIoH3CCp8W639jJyQkuPHinJ2NHe7on1xvlUA7SuGfJAfvMldrsoAVm6ECz';
             mScript.onload = async () => {
               if ((window as any).mammoth) {
                 const res = await fetch(viewerUrl);
                 const arrayBuffer = await res.arrayBuffer();
                 const result = await (window as any).mammoth.convertToHtml({ arrayBuffer });
-                setWordHtml(result.value);
+                setWordHtml(DOMPurify.sanitize(result.value || ''));
               }
             };
             document.head.appendChild(mScript);
@@ -68,7 +71,7 @@ export default function GlobalFileViewer() {
             const res = await fetch(viewerUrl);
             const arrayBuffer = await res.arrayBuffer();
             const result = await (window as any).mammoth.convertToHtml({ arrayBuffer });
-            setWordHtml(result.value);
+            setWordHtml(DOMPurify.sanitize(result.value || ''));
           }
         } catch (err) {
           console.error('Word render error:', err);
@@ -176,7 +179,7 @@ export default function GlobalFileViewer() {
                   <Loader2 className="w-5 h-5 animate-spin text-blue-600" /> Word Belgesi Yükleniyor...
                 </div>
               ) : (
-                <div className="global-word-content" dangerouslySetInnerHTML={{ __html: wordHtml || '<p class="text-slate-400 italic">Doküman içeriği görüntülenemedi.</p>' }} />
+                <div className="global-word-content" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(wordHtml || '') || '<p class="text-slate-400 italic">Doküman içeriği görüntülenemedi.</p>' }} />
               )}
             </div>
           ) : (

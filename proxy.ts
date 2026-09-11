@@ -14,7 +14,7 @@ export const config = {
      * - _next/image (image optimization files)
      * - _vercel (Vercel internals)
      * - favicon.ico (favicon file)
-     * - Any file with extension
+     * - Any file with extension (e.g. .svg, .png, .jpg)
      */
     '/((?!api|_next|_vercel|.*\\..*).*)',
   ],

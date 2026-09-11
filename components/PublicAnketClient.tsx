@@ -22,6 +22,8 @@ export default function PublicAnketClient({ params }: PublicAnketClientProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [websiteHoney, setWebsiteHoney] = useState('');
+  const [loadTimestamp] = useState<number>(() => Date.now());
 
   useEffect(() => {
     async function fetchAnket() {
@@ -70,8 +72,35 @@ export default function PublicAnketClient({ params }: PublicAnketClientProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Basit Validasyon (Boş zorunlu alan kontrolü vb eklenebilir, şimdilik geçiyoruz)
-    
+    // 1. Bot / Honeypot Tuzağı (Görünmez alan doldurulmuşsa bot kabul et)
+    if (websiteHoney && websiteHoney.trim().length > 0) {
+      setIsSuccess(true);
+      return;
+    }
+
+    // 2. Çok Hızlı Gönderim Engeli (İnsan davranışı: min 2.5 saniye)
+    if (Date.now() - loadTimestamp < 2500) {
+      alert('Lütfen formu göndermeden önce soruları inceleyiniz.');
+      return;
+    }
+
+    // 3. Ardışık Spam Gönderim Engeli (Cooldown 30 saniye)
+    const cooldownKey = `anket_submitted_${anket?.id}`;
+    try {
+      const lastSubmit = localStorage.getItem(cooldownKey);
+      if (lastSubmit && Date.now() - parseInt(lastSubmit, 10) < 30000) {
+        alert('Bu anketi az önce yanıtladınız. Lütfen tekrar göndermeden önce biraz bekleyin.');
+        return;
+      }
+    } catch (_) {}
+
+    // 4. Payload Boyut Güvenliği (Maksimum 50KB)
+    const payloadStr = JSON.stringify(cevaplar);
+    if (payloadStr.length > 50000) {
+      alert('Yanıt verisi izin verilen boyutu aşıyor.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const { error } = await supabase.from('anket_cevaplari').insert({
@@ -81,7 +110,10 @@ export default function PublicAnketClient({ params }: PublicAnketClientProps) {
 
       if (error) throw error;
       
-      
+      try {
+        localStorage.setItem(cooldownKey, Date.now().toString());
+      } catch (_) {}
+
       // Anket gönderim logunu at (asenkron, hatayı yutacak)
       await logSystemAction({
         supabase,
@@ -148,6 +180,19 @@ export default function PublicAnketClient({ params }: PublicAnketClientProps) {
 
         {/* Form İçeriği */}
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Honeypot field for anti-bot protection */}
+          <div style={{ position: 'absolute', left: '-9999px', top: '-9999px', opacity: 0, height: 0, width: 0, overflow: 'hidden' }} aria-hidden="true" tabIndex={-1}>
+            <label htmlFor="website_url_hp">Leave this field blank</label>
+            <input
+              id="website_url_hp"
+              name="website_url_hp"
+              type="text"
+              autoComplete="off"
+              value={websiteHoney}
+              onChange={e => setWebsiteHoney(e.target.value)}
+              tabIndex={-1}
+            />
+          </div>
           {anket.sorular?.map((soru: any, index: number) => (
             <div key={soru.id} className={`bg-white p-8 rounded-2xl shadow-sm border transition-all ${soru.tip === 'bilgi_kutusu' ? 'border-amber-200 bg-amber-50/20' : soru.tip === 'bolum_basligi' ? 'border-none bg-gradient-to-r from-purple-50 to-blue-50 shadow-inner' : 'border-slate-200 focus-within:shadow-md focus-within:border-purple-300'}`}>
               {soru.tip === 'bilgi_kutusu' ? (

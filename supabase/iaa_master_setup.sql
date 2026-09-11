@@ -1,4 +1,4 @@
-﻿-- ==============================================================================
+-- ==============================================================================
 -- AKREDİTASYON BİLGİ YÖNETİM SİSTEMİ (ABYS) - TEMİZ MASTER KURULUM SQL
 -- Kurum: İlahiyat Fakültesi (İAA Akreditasyon Standartları)
 -- Açıklama: Tüm veritabanı tabloları, RLS politikaları, fonksiyonlar, trigger'lar
@@ -8,8 +8,18 @@
 --           KANIT BENZERSİZLİK KISITLARINI VE DERS İZLENCESİ UYUMLU ŞEMALARI KURAR.
 -- ==============================================================================
 
--- 1. EKLENTÄ°LER (EXTENSIONS)
+-- 1. EKLENTİLER (EXTENSIONS) & OTOMATİK UYKU ENGELLEYİCİ
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+DO $$ 
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'keep-alive-job') THEN
+    PERFORM cron.schedule('keep-alive-job', '0 0 * * *', $$SELECT count(*) FROM public.ana_basliklar$$);
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
 
 -- 2. TABLO TANIMLAMALARI (TABLE DEFINITIONS)
 
@@ -358,6 +368,38 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
+
+-- 3.1 PROFILLER TABLOSU SUTUN KORUMA TETIKLEYICISI (TRIGGER)
+CREATE OR REPLACE FUNCTION public.protect_profiller_sensitive_columns()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('request.jwt.claim.role', true) != 'service_role' THEN
+    IF NEW.rol IS DISTINCT FROM OLD.rol THEN
+      IF NOT (
+        EXISTS (
+          SELECT 1 FROM public.profiller 
+          WHERE id = auth.uid() 
+          AND (rol ILIKE '%admin%' OR rol ILIKE '%yönetici%' OR rol ILIKE '%yonetici%')
+        )
+      ) THEN
+        RAISE EXCEPTION 'Güvenlik İhlali: Kullanıcı kendi rolünü değiştiremez.';
+      END IF;
+    END IF;
+
+    NEW.id := OLD.id;
+    NEW.email := OLD.email;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_protect_profiller_sensitive_columns ON public.profiller;
+CREATE TRIGGER trg_protect_profiller_sensitive_columns
+  BEFORE UPDATE ON public.profiller
+  FOR EACH ROW
+  EXECUTE FUNCTION public.protect_profiller_sensitive_columns();
+
 -- 4. RLS (ROW LEVEL SECURITY) POLÄ°TÄ°KALARI (SONSUZ DÃ–NGÃœSÃœZ)
 
 ALTER TABLE public.donemler ENABLE ROW LEVEL SECURITY;
@@ -418,7 +460,7 @@ DROP POLICY IF EXISTS "bildirimler_all" ON public.bildirimler;
 
 -- YENÄ° POLÄ°TÄ°KALARI KUR (TEXT DÃ–NÃœÅÃœMÃœ VE KESÄ°N UYUMLU)
 CREATE POLICY "profiller_read_all" ON public.profiller FOR SELECT USING (auth.role() = 'authenticated');
-CREATE POLICY "profiller_update_own" ON public.profiller FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "profiller_update_own" ON public.profiller FOR UPDATE USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 CREATE POLICY "profiller_admin_all" ON public.profiller FOR ALL USING (public.get_user_role(auth.uid()) ILIKE ANY (ARRAY['%admin%', '%yÃ¶netici%', '%yonetici%']));
 
 CREATE POLICY "donemler_read_all" ON public.donemler FOR SELECT USING (auth.role() = 'authenticated');
@@ -468,7 +510,7 @@ CREATE POLICY "izlenceler_all_own" ON public.ders_izlenceleri FOR ALL USING (aut
 
 CREATE POLICY "bildirimler_all" ON public.bildirimler FOR ALL USING (auth.role() = 'authenticated');
 
--- STORAGE (DOSYA DEPOLAMA) POLÄ°TÄ°KALARI (dokumanlar & kanit_dosyalari)
+-- STORAGE (DOSYA DEPOLAMA) POLİTİKALARI (dokumanlar & kanit_dosyalari)
 DROP POLICY IF EXISTS "dokumanlar_select" ON storage.objects;
 DROP POLICY IF EXISTS "dokumanlar_insert" ON storage.objects;
 DROP POLICY IF EXISTS "dokumanlar_update" ON storage.objects;
@@ -480,14 +522,29 @@ DROP POLICY IF EXISTS "kanit_dosyalari_update" ON storage.objects;
 DROP POLICY IF EXISTS "kanit_dosyalari_delete" ON storage.objects;
 
 CREATE POLICY "dokumanlar_select" ON storage.objects FOR SELECT USING (bucket_id = 'dokumanlar');
-CREATE POLICY "dokumanlar_insert" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'dokumanlar');
-CREATE POLICY "dokumanlar_update" ON storage.objects FOR UPDATE USING (bucket_id = 'dokumanlar');
-CREATE POLICY "dokumanlar_delete" ON storage.objects FOR DELETE USING (bucket_id = 'dokumanlar');
+CREATE POLICY "dokumanlar_insert" ON storage.objects FOR INSERT TO authenticated 
+  WITH CHECK (
+    bucket_id = 'dokumanlar' 
+    AND (
+      LOWER(storage.extension(name)) IN ('pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx', 'zip')
+      OR storage.extension(name) = ''
+    )
+  );
+CREATE POLICY "dokumanlar_update" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'dokumanlar');
+CREATE POLICY "dokumanlar_delete" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'dokumanlar');
 
 CREATE POLICY "kanit_dosyalari_select" ON storage.objects FOR SELECT USING (bucket_id = 'kanit_dosyalari');
-CREATE POLICY "kanit_dosyalari_insert" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'kanit_dosyalari');
-CREATE POLICY "kanit_dosyalari_update" ON storage.objects FOR UPDATE USING (bucket_id = 'kanit_dosyalari');
-CREATE POLICY "kanit_dosyalari_delete" ON storage.objects FOR DELETE USING (bucket_id = 'kanit_dosyalari');
+CREATE POLICY "kanit_dosyalari_insert" ON storage.objects FOR INSERT TO authenticated 
+  WITH CHECK (
+    bucket_id = 'kanit_dosyalari' 
+    AND (
+      LOWER(storage.extension(name)) IN ('pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx', 'zip')
+      OR storage.extension(name) = ''
+    )
+  );
+CREATE POLICY "kanit_dosyalari_update" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'kanit_dosyalari');
+CREATE POLICY "kanit_dosyalari_delete" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'kanit_dosyalari');
+
 
 -- 5. SABÄ°T VERÄ°LER (SEED DATA) INSERT Ä°ÅLEMLERÄ°
 

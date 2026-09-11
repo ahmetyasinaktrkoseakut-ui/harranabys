@@ -44,3 +44,20 @@ next-env.d.ts
 .vs/
 
 .env*.local
+# sensitive & debug test files
+users_meta.json
+test-db.js
+test-db.mjs
+test-cols.js
+test-trans.mjs
+fetch-db.mjs
+scratch-db.mjs
+final_lint*.txt
+lint_errors.txt
+
+# Sensitive and scratch files
+test-db.*
+fetch-db.*
+scratch-db.*
+test-cols.*
+test-trans.*
