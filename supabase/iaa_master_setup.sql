@@ -463,6 +463,95 @@ CREATE POLICY "profiller_read_all" ON public.profiller FOR SELECT USING (auth.ro
 CREATE POLICY "profiller_update_own" ON public.profiller FOR UPDATE USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 CREATE POLICY "profiller_admin_all" ON public.profiller FOR ALL USING (public.get_user_role(auth.uid()) ILIKE ANY (ARRAY['%admin%', '%yÃ¶netici%', '%yonetici%']));
 
+-- PROFİLLER TABLOSU GÜVENLİK TETİKLEYİCİLERİ (ROL VE SÜTUN KORUMASI - FAIL CLOSE)
+CREATE OR REPLACE FUNCTION public.protect_profiller_sensitive_columns()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF COALESCE(current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
+    IF NEW.rol IS DISTINCT FROM OLD.rol THEN
+      IF NOT (
+        EXISTS (
+          SELECT 1 FROM public.profiller 
+          WHERE id = auth.uid() 
+          AND (rol ILIKE '%admin%' OR rol ILIKE '%yönetici%' OR rol ILIKE '%yonetici%')
+        )
+      ) THEN
+        RAISE EXCEPTION 'Güvenlik İhlali: Kullanıcı kendi rolünü değiştiremez.';
+      END IF;
+    END IF;
+
+    NEW.id := OLD.id;
+    NEW.email := OLD.email;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_protect_profiller_sensitive_columns ON public.profiller;
+CREATE TRIGGER trg_protect_profiller_sensitive_columns
+  BEFORE UPDATE ON public.profiller
+  FOR EACH ROW
+  EXECUTE FUNCTION public.protect_profiller_sensitive_columns();
+
+CREATE OR REPLACE FUNCTION public.protect_profiller_insert_columns()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF COALESCE(current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
+    IF NEW.rol IS NOT NULL AND NEW.rol ILIKE ANY (ARRAY['%admin%', '%yönetici%', '%yonetici%']) THEN
+      IF NOT (
+        EXISTS (
+          SELECT 1 FROM public.profiller 
+          WHERE id = auth.uid() 
+          AND (rol ILIKE '%admin%' OR rol ILIKE '%yönetici%' OR rol ILIKE '%yonetici%')
+        )
+      ) THEN
+        NEW.rol := 'Beklemede';
+      END IF;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_protect_profiller_insert_columns ON public.profiller;
+CREATE TRIGGER trg_protect_profiller_insert_columns
+  BEFORE INSERT ON public.profiller
+  FOR EACH ROW
+  EXECUTE FUNCTION public.protect_profiller_insert_columns();
+
+-- ANONİM ANKET SUNUCU TARAFI RATE LIMIT VE DOĞRULAMA
+CREATE OR REPLACE FUNCTION public.rate_limit_anket_cevaplari()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.anketler WHERE id = NEW.anket_id) THEN
+    RAISE EXCEPTION 'Geçersiz anket IDsi.';
+  END IF;
+
+  IF NEW.cevaplar IS NULL OR pg_column_size(NEW.cevaplar) > 65536 THEN
+    RAISE EXCEPTION 'Geçersiz veya aşırı büyük anket verisi.';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.anket_cevaplari
+    WHERE anket_id = NEW.anket_id
+    AND katilim_tarihi > (NOW() - INTERVAL '1 second')
+  ) THEN
+    RAISE EXCEPTION 'Aşırı istek algılandı. Lütfen birkaç saniye sonra tekrar deneyin.';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_rate_limit_anket_cevaplari ON public.anket_cevaplari;
+CREATE TRIGGER trg_rate_limit_anket_cevaplari
+  BEFORE INSERT ON public.anket_cevaplari
+  FOR EACH ROW
+  EXECUTE FUNCTION public.rate_limit_anket_cevaplari();
+
+
 CREATE POLICY "donemler_read_all" ON public.donemler FOR SELECT USING (auth.role() = 'authenticated');
 CREATE POLICY "donemler_admin_all" ON public.donemler FOR ALL USING (public.get_user_role(auth.uid()) ILIKE ANY (ARRAY['%admin%', '%yÃ¶netici%', '%yonetici%']));
 
@@ -521,29 +610,56 @@ DROP POLICY IF EXISTS "kanit_dosyalari_insert" ON storage.objects;
 DROP POLICY IF EXISTS "kanit_dosyalari_update" ON storage.objects;
 DROP POLICY IF EXISTS "kanit_dosyalari_delete" ON storage.objects;
 
-CREATE POLICY "dokumanlar_select" ON storage.objects FOR SELECT USING (bucket_id = 'dokumanlar');
+-- A. Okuma: Giriş yapmış kullanıcılar
+CREATE POLICY "dokumanlar_select" ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'dokumanlar');
+CREATE POLICY "kanit_dosyalari_select" ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'kanit_dosyalari');
+
+-- B. Yükleme: Sadece izin verilen uzantılar (Uzantısız dosya kesinlikle yasak)
 CREATE POLICY "dokumanlar_insert" ON storage.objects FOR INSERT TO authenticated 
   WITH CHECK (
     bucket_id = 'dokumanlar' 
-    AND (
-      LOWER(storage.extension(name)) IN ('pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx', 'zip')
-      OR storage.extension(name) = ''
-    )
+    AND LOWER(storage.extension(name)) IN ('pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx', 'zip')
   );
-CREATE POLICY "dokumanlar_update" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'dokumanlar');
-CREATE POLICY "dokumanlar_delete" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'dokumanlar');
-
-CREATE POLICY "kanit_dosyalari_select" ON storage.objects FOR SELECT USING (bucket_id = 'kanit_dosyalari');
 CREATE POLICY "kanit_dosyalari_insert" ON storage.objects FOR INSERT TO authenticated 
   WITH CHECK (
     bucket_id = 'kanit_dosyalari' 
+    AND LOWER(storage.extension(name)) IN ('pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx', 'zip')
+  );
+
+-- C. Güncelleme ve Silme: YALNIZCA DOSYANIN SAHİBİ VEYA YÖNETİCİ
+CREATE POLICY "dokumanlar_update" ON storage.objects FOR UPDATE TO authenticated 
+  USING (
+    bucket_id = 'dokumanlar' 
     AND (
-      LOWER(storage.extension(name)) IN ('pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx', 'zip')
-      OR storage.extension(name) = ''
+      auth.uid() = owner 
+      OR public.get_user_role(auth.uid()) ILIKE ANY (ARRAY['%admin%', '%yönetici%', '%yonetici%'])
     )
   );
-CREATE POLICY "kanit_dosyalari_update" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'kanit_dosyalari');
-CREATE POLICY "kanit_dosyalari_delete" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'kanit_dosyalari');
+CREATE POLICY "dokumanlar_delete" ON storage.objects FOR DELETE TO authenticated 
+  USING (
+    bucket_id = 'dokumanlar' 
+    AND (
+      auth.uid() = owner 
+      OR public.get_user_role(auth.uid()) ILIKE ANY (ARRAY['%admin%', '%yönetici%', '%yonetici%'])
+    )
+  );
+
+CREATE POLICY "kanit_dosyalari_update" ON storage.objects FOR UPDATE TO authenticated 
+  USING (
+    bucket_id = 'kanit_dosyalari' 
+    AND (
+      auth.uid() = owner 
+      OR public.get_user_role(auth.uid()) ILIKE ANY (ARRAY['%admin%', '%yönetici%', '%yonetici%'])
+    )
+  );
+CREATE POLICY "kanit_dosyalari_delete" ON storage.objects FOR DELETE TO authenticated 
+  USING (
+    bucket_id = 'kanit_dosyalari' 
+    AND (
+      auth.uid() = owner 
+      OR public.get_user_role(auth.uid()) ILIKE ANY (ARRAY['%admin%', '%yönetici%', '%yonetici%'])
+    )
+  );
 
 
 -- 5. SABÄ°T VERÄ°LER (SEED DATA) INSERT Ä°ÅLEMLERÄ°

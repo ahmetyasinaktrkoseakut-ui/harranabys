@@ -6,7 +6,6 @@ import { supabase } from '@/lib/supabase/client';
 import { useRouter } from '@/i18n/routing';
 import { useLocale, useTranslations } from 'next-intl';
 import { getLocalizedField } from '@/lib/i18n-utils';
-import { validateFileSize } from '@/lib/utils';
 
 const getAsamaSlug = (asama: string) => {
   if (!asama) return 'kontrol-etme';
@@ -89,33 +88,12 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
   const handleApprove = async (id: string) => {
     setActionLoadingId(id);
     try {
-      const targetRow = data.find(item => item.id === id);
-      const altOlcutId = targetRow?.alt_olcut_id;
-      const donemId = targetRow?.donem_id;
-
-      if (altOlcutId && donemId) {
-        const { error } = await supabase
-          .from('puko_degerlendirmeleri')
-          .update({ durum: 'Onaylandı', red_nedeni: null })
-          .eq('alt_olcut_id', altOlcutId)
-          .eq('donem_id', donemId);
-        if (error) throw error;
-
-        await supabase
-          .from('ozdegerlendirme_raporlari')
-          .update({ onay_durumu: 'onaylandi', red_nedeni: null })
-          .eq('alt_olcut_id', String(altOlcutId))
-          .eq('donem_id', donemId);
-
-        setData(prev => prev.filter(item => item.alt_olcut_id !== altOlcutId));
-      } else {
-        const { error } = await supabase
-          .from('puko_degerlendirmeleri')
-          .update({ durum: 'Onaylandı', red_nedeni: null })
-          .eq('id', id);
-        if (error) throw error;
-        setData(prev => prev.filter(item => item.id !== id));
-      }
+      const { error } = await supabase
+        .from('puko_degerlendirmeleri')
+        .update({ durum: 'Onaylandı' })
+        .eq('id', id);
+      if (error) throw error;
+      setData(prev => prev.filter(item => item.id !== id));
     } catch (err: any) {
       alert('Onay sırasında hata: ' + err.message);
     } finally {
@@ -133,33 +111,12 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
     if (!rejectingId || !rejectReason.trim()) { alert('Red nedeni giriniz.'); return; }
     setIsSubmitting(true);
     try {
-      const targetRow = data.find(item => item.id === rejectingId);
-      const altOlcutId = targetRow?.alt_olcut_id;
-      const donemId = targetRow?.donem_id;
-
-      if (altOlcutId && donemId) {
-        const { error } = await supabase
-          .from('puko_degerlendirmeleri')
-          .update({ durum: 'Reddedildi', red_nedeni: rejectReason })
-          .eq('alt_olcut_id', altOlcutId)
-          .eq('donem_id', donemId);
-        if (error) throw error;
-
-        await supabase
-          .from('ozdegerlendirme_raporlari')
-          .update({ onay_durumu: 'reddedildi', red_nedeni: rejectReason })
-          .eq('alt_olcut_id', String(altOlcutId))
-          .eq('donem_id', donemId);
-
-        setData(prev => prev.filter(item => item.alt_olcut_id !== altOlcutId));
-      } else {
-        const { error } = await supabase
-          .from('puko_degerlendirmeleri')
-          .update({ durum: 'Reddedildi', red_nedeni: rejectReason })
-          .eq('id', rejectingId);
-        if (error) throw error;
-        setData(prev => prev.filter(item => item.id !== rejectingId));
-      }
+      const { error } = await supabase
+        .from('puko_degerlendirmeleri')
+        .update({ durum: 'Reddedildi', red_nedeni: rejectReason })
+        .eq('id', rejectingId);
+      if (error) throw error;
+      setData(prev => prev.filter(item => item.id !== rejectingId));
       setIsRejectModalOpen(false);
     } catch (err: any) {
       alert('Red işlemi sırasında hata: ' + err.message);
@@ -178,9 +135,15 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
   const handleRevizeSubmit = async () => {
     if (!file || !selectedRow) return;
     
-    const validation = validateFileSize(file);
-    if (!validation.valid) {
-      setModalError(validation.error!);
+    // Güvenlik: Dosya uzantı ve boyut denetimi
+    const fileExt = file.name.split('.').pop()?.toLowerCase();
+    const allowedExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx'];
+    if (!fileExt || !allowedExtensions.includes(fileExt)) {
+      setModalError('Geçersiz dosya formatı! Sadece PDF, Görsel veya Office belgesi seçebilirsiniz.');
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setModalError('Dosya boyutu 25MB sınırını aşamaz.');
       return;
     }
 
@@ -189,7 +152,6 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
 
     try {
       // 1. Upload new file
-      const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
       
       const { error: uploadError } = await supabase.storage
@@ -401,20 +363,33 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
                     <div className="flex text-sm text-slate-600 justify-center">
                       <label htmlFor="file-upload-revize" className="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500 px-2 py-1 shadow-sm border border-slate-200">
                         <span>{t('modal.select_file')}</span>
-                        <input id="file-upload-revize" name="file-upload-revize" type="file" className="sr-only" onChange={(e) => {
-                          const selected = e.target.files?.[0] || null;
-                          if (selected) {
-                            const v = validateFileSize(selected);
-                            if (!v.valid) {
-                              setModalError(v.error!);
-                              setFile(null);
-                              e.target.value = '';
-                              return;
+                        <input 
+                          id="file-upload-revize" 
+                          name="file-upload-revize" 
+                          type="file" 
+                          accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx"
+                          className="sr-only" 
+                          onChange={(e) => {
+                            const selFile = e.target.files?.[0] || null;
+                            if (selFile) {
+                              const ext = selFile.name.split('.').pop()?.toLowerCase();
+                              const allowed = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'docx', 'xlsx'];
+                              if (!ext || !allowed.includes(ext)) {
+                                alert('Geçersiz dosya formatı! Sadece PDF, Görsel veya Office belgesi seçebilirsiniz.');
+                                e.target.value = '';
+                                setFile(null);
+                                return;
+                              }
+                              if (selFile.size > 25 * 1024 * 1024) {
+                                alert('Dosya boyutu 25MB sınırını aşamaz.');
+                                e.target.value = '';
+                                setFile(null);
+                                return;
+                              }
                             }
-                          }
-                          setModalError(null);
-                          setFile(selected);
-                        }} />
+                            setFile(selFile);
+                          }} 
+                        />
                       </label>
                     </div>
                     <p className="text-xs text-slate-500 mt-2">
