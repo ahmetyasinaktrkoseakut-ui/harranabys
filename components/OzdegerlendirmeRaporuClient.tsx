@@ -10,7 +10,7 @@ import { getLocalizedField } from '@/lib/i18n-utils';
 import { usePeriod } from '@/contexts/PeriodContext';
 import RichTextEditor, { RichTextEditorRef } from '@/components/RichTextEditor';
 import { logAction } from '@/lib/logger';
-import { validateFileSize, getAssignedLetter } from '@/lib/utils';
+import { validateFileSize, getAssignedLetter, toProxyStorageUrl, sanitizeReportHtmlLinks } from '@/lib/utils';
 import { validateUploadedFile } from '@/lib/fileValidation';
 
 interface OzdegerlendirmeRaporuClientProps {
@@ -203,13 +203,20 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
         <p style='text-align:center; color: #718096; font-size: 12px;'>Oluşturulma Tarihi: ${new Date().toLocaleDateString(locale === 'tr' ? 'tr-TR' : 'en-US')} ${new Date().toLocaleTimeString(locale === 'tr' ? 'tr-TR' : 'en-US')}</p>
         
         <div class='content'>
-          ${raporMetni}
+          ${(() => {
+            const origin = typeof window !== 'undefined' ? window.location.origin : '';
+            return sanitizeReportHtmlLinks(raporMetni || '', origin);
+          })()}
         </div>
 
         <div class='kanit-section'>
           <h2>${t('evidences')}</h2>
           ${kanitlar.length === 0 ? `<p><i>${t('no_evidence')}</i></p>` : '<ul>'}
-          ${kanitlar.map((doc, idx) => `<li><strong id="kanit-${idx}">[Kanıt ${idx + 1}]</strong> <a class='kanit-link' href='${doc.url}'>${doc.name}</a></li>`).join('')}
+          ${kanitlar.map((doc, idx) => {
+            const origin = typeof window !== 'undefined' ? window.location.origin : '';
+            const safeUrl = toProxyStorageUrl(doc.url, origin);
+            return `<li><strong id="kanit-${idx}">[Kanıt ${idx + 1}]</strong> <a class='kanit-link' href='${safeUrl}'>${doc.name}</a></li>`;
+          }).join('')}
           ${kanitlar.length === 0 ? '' : '</ul>'}
         </div>
 

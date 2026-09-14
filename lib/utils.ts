@@ -40,3 +40,37 @@ export function validateFileSize(file: File): { valid: boolean; error?: string }
   return { valid: true };
 }
 
+/**
+ * Converts any legacy Supabase storage URL or relative proxy path
+ * into a fully-qualified application proxy URL for Word reports.
+ */
+export function toProxyStorageUrl(url: string, origin: string): string {
+  if (!url) return url;
+  const trimmed = url.trim();
+  // Supabase storage format (e.g. .../storage/v1/object/public/bucket/path or .../storage/v1/object/sign/bucket/path)
+  if (trimmed.includes('/storage/v1/object/')) {
+    const parts = trimmed.split('/storage/v1/object/');
+    const afterObject = parts[1]?.replace(/^public\//, '')?.replace(/^sign\//, '') || '';
+    const [bucket, ...pathParts] = afterObject.split('?')[0].split('/');
+    if (bucket && pathParts.length > 0) {
+      const cleanPath = pathParts.join('/');
+      return `${origin}/api/storage/${bucket}/${cleanPath}`;
+    }
+  }
+  // Relative /api/storage/ format
+  if (trimmed.startsWith('/api/storage/')) {
+    return `${origin}${trimmed}`;
+  }
+  return trimmed;
+}
+
+/**
+ * Replaces href attributes in report HTML so all internal document links point to the proxy URL
+ */
+export function sanitizeReportHtmlLinks(html: string, origin: string): string {
+  if (!html) return html;
+  return html.replace(/href=(["'])(.*?)\1/gi, (match, quote, href) => {
+    const converted = toProxyStorageUrl(href, origin);
+    return `href=${quote}${converted}${quote}`;
+  });
+}

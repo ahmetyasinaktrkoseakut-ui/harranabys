@@ -37,8 +37,36 @@ export default function LoginPage() {
           password,
         })
         if (error) throw error
-        router.push('/olcutler')
-        router.refresh()
+
+        let redirectTarget: string | null = null;
+        if (typeof window !== 'undefined') {
+          const urlParams = new URLSearchParams(window.location.search);
+          const rawRedirect = urlParams.get('redirect');
+          if (rawRedirect) {
+            const trimmed = rawRedirect.trim();
+            // Güvenlik doğrulamaları:
+            // 1. Kesinlikle /api/storage/ ile başlamalı
+            // 2. Protocol-relative (//) olmamalı
+            // 3. Ters slash (\) içermemeli
+            // 4. javascript: veya data: içermemeli
+            if (
+              trimmed.startsWith('/api/storage/') &&
+              !trimmed.startsWith('//') &&
+              !trimmed.includes('\\') &&
+              !trimmed.toLowerCase().includes('javascript:') &&
+              !trimmed.toLowerCase().includes('data:')
+            ) {
+              redirectTarget = trimmed;
+            }
+          }
+        }
+
+        if (redirectTarget) {
+          window.location.href = redirectTarget;
+        } else {
+          router.push('/olcutler');
+          router.refresh();
+        }
       } else {
         // SIGN UP
         const { data, error } = await supabase.auth.signUp({

@@ -40,7 +40,31 @@ async function handleStorageProxy(
 
     // Yetkisiz erisimi kesinlikle engelle
     if (!user) {
-      return NextResponse.json({ error: 'Yetkisiz erisim. Lutfen once giris yapiniz.' }, { status: 401 });
+      if (isHead) {
+        return NextResponse.json({ error: 'Yetkisiz erisim. Lutfen once giris yapiniz.' }, { status: 401 });
+      }
+
+      // Oturumsuz GET isteğinde:
+      // JSON 401 döndürme; kullanıcıyı mevcut locale ile /${locale}/login?redirect=... adresine yönlendir.
+      const localeCookie = cookieStore.get('NEXT_LOCALE')?.value;
+      const supportedLocales = ['tr', 'en', 'ar'];
+      const locale = (localeCookie && supportedLocales.includes(localeCookie)) ? localeCookie : 'tr';
+
+      const pathname = request.nextUrl.pathname;
+      // redirect yalnızca /api/storage/ ile başlayan dahili yolları kabul etsin.
+      // Harici URL, // ile başlayan adres veya javascript/data URL kabul edilmesin.
+      const isInternalStoragePath =
+        pathname.startsWith('/api/storage/') &&
+        !pathname.startsWith('//') &&
+        !pathname.includes('\\') &&
+        !pathname.toLowerCase().startsWith('/api/storage/javascript:') &&
+        !pathname.toLowerCase().startsWith('/api/storage/data:');
+
+      const loginUrl = new URL(`/${locale}/login`, request.url);
+      if (isInternalStoragePath) {
+        loginUrl.searchParams.set('redirect', pathname);
+      }
+      return NextResponse.redirect(loginUrl, 307);
     }
 
     const supabaseAdmin = createClient(supabaseUrl, process.env.SUPABASE_SERVICE_ROLE_KEY!);

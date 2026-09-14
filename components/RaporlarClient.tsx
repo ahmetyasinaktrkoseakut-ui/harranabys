@@ -7,6 +7,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { getLocalizedField } from '@/lib/i18n-utils';
 import DOMPurify from 'dompurify';
 import { usePeriod } from '@/contexts/PeriodContext';
+import { toProxyStorageUrl, sanitizeReportHtmlLinks } from '@/lib/utils';
 
 interface AnaBaslik {
   id: string;
@@ -277,15 +278,18 @@ export default function RaporlarClient() {
           const uniqueEvidences = allEvidences;
           const olgunlukPuani = pukoList.find(p => p.puko_asamasi === 'olgunluk')?.olgunluk_puani;
 
+          const origin = typeof window !== 'undefined' ? window.location.origin : '';
+          const safeCombinedText = sanitizeReportHtmlLinks(combinedText, origin);
+
           htmlContent += `<h3>${olcut.kod} - ${getLocalizedField(olcut, 'olcut_adi', docLang)}</h3>`;
           
-          if (combinedText) {
-            htmlContent += `<div>${combinedText}</div>`;
+          if (safeCombinedText) {
+            htmlContent += `<div>${safeCombinedText}</div>`;
           } else {
             htmlContent += `<p style='color: #a0aec0; font-style: italic;'>${isEn ? 'No English report available for this criterion.' : t('no_report_yet')}</p>`;
           }
           
-          if (combinedText || olgunlukPuani || uniqueEvidences.length > 0) {
+          if (safeCombinedText || olgunlukPuani || uniqueEvidences.length > 0) {
             htmlContent += `<div style='background-color: #fffaf0; padding: 15px; border: 1px solid #feebc8; margin-top: 20px;'>`;
             
             if (olgunlukPuani) {
@@ -299,9 +303,10 @@ export default function RaporlarClient() {
             if (uniqueEvidences.length > 0) {
               htmlContent += `<div style='border-top: 1px solid #feebc8; padding-top: 10px; margin-top: 10px;'>`;
               htmlContent += `<p style='color: #c05621; font-size: 12px; font-weight: bold; margin-bottom: 5px;'>${isEn ? 'Attached Evidences' : t('attached_evidences')}</p>`;
-              const evidenceLinks = uniqueEvidences.map((k, idx) => 
-                `<a href='${k.url}' style='color: #2b6cb0; text-decoration: none; font-size: 12px; display: block; margin-bottom: 3px;'>${k.no}. ${k.name}</a>`
-              ).join('');
+              const evidenceLinks = uniqueEvidences.map((k) => {
+                const safeUrl = toProxyStorageUrl(k.url, origin);
+                return `<a href='${safeUrl}' style='color: #2b6cb0; text-decoration: none; font-size: 12px; display: block; margin-bottom: 3px;'>${k.no}. ${k.name}</a>`;
+              }).join('');
               htmlContent += evidenceLinks;
               htmlContent += `</div>`;
             }
