@@ -148,7 +148,9 @@ async function handleStorageProxy(
     const headers = new Headers();
     headers.set('Content-Type', fileBlob.type || 'application/octet-stream');
     headers.set('Content-Length', fileBlob.size.toString());
-    headers.set('Cache-Control', 'private, max-age=3600');
+    headers.set('Cache-Control', 'private, no-cache, no-store, max-age=0, must-revalidate, proxy-revalidate');
+    headers.set('Pragma', 'no-cache');
+    headers.set('Expires', '0');
     headers.set('Content-Disposition', 'inline');
 
     // HEAD istegi icin yalnizca basliklar ve 200 status donulur
