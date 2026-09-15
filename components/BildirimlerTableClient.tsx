@@ -7,6 +7,7 @@ import { useRouter } from '@/i18n/routing';
 import { useLocale, useTranslations } from 'next-intl';
 import { getLocalizedField } from '@/lib/i18n-utils';
 import { validateUploadedFile } from '@/lib/fileValidation';
+import { usePeriod } from '@/contexts/PeriodContext';
 
 const getAsamaSlug = (asama: string) => {
   if (!asama) return 'kontrol-etme';
@@ -26,6 +27,7 @@ const getAsamaSlug = (asama: string) => {
 
 export default function BildirimlerTableClient({ initialData, isApprover = false }: { initialData: any[], isApprover?: boolean }) {
   const t = useTranslations('Notifications');
+  const { selectedPeriod } = usePeriod();
   const [data, setData] = useState(initialData);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedRow, setSelectedRow] = useState<any>(null);
@@ -36,6 +38,7 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
   const [rejectReason, setRejectReason] = useState('');
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [selectedRejectRow, setSelectedRejectRow] = useState<any>(null);
   const router = useRouter();
   const locale = useLocale();
 
@@ -86,15 +89,54 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
 
   const currentData = data || [];
 
-  const handleApprove = async (id: string) => {
-    setActionLoadingId(id);
+  const handleApprove = async (row: any) => {
+    setActionLoadingId(row.id);
     try {
-      const { error } = await supabase
+      const activePeriodId = row.donem_id || selectedPeriod?.id;
+
+      // 1. PUKÖ tablosundaki o alt ölçüte ve döneme ait TÜM kayıtları 'Onaylandı' yap
+      let pukoQuery = supabase
         .from('puko_degerlendirmeleri')
-        .update({ durum: 'Onaylandı' })
-        .eq('id', id);
-      if (error) throw error;
-      setData(prev => prev.filter(item => item.id !== id));
+        .update({ durum: 'Onaylandı', red_nedeni: null })
+        .eq('alt_olcut_id', row.alt_olcut_id);
+
+      if (activePeriodId) {
+        pukoQuery = pukoQuery.eq('donem_id', activePeriodId);
+      }
+      const { error: pukoError } = await pukoQuery;
+      if (pukoError) throw pukoError;
+
+      // 2. Özdeğerlendirme raporu tablosundaki onay durumunu da 'onaylandi' yap
+      try {
+        let ozdQuery = supabase
+          .from('ozdegerlendirme_raporlari')
+          .update({ onay_durumu: 'onaylandi', red_nedeni: null })
+          .eq('alt_olcut_id', String(row.alt_olcut_id));
+        if (activePeriodId) {
+          ozdQuery = ozdQuery.eq('donem_id', activePeriodId);
+        }
+        await ozdQuery;
+      } catch (e) {
+        console.warn("Özdeğerlendirme raporu onay senkronizasyonu:", e);
+      }
+
+      // 3. Bildirim tablosuna onay bildirimi ekle
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        if (currentUser) {
+          await supabase.from('bildirimler').insert({
+            gonderen_id: currentUser.id,
+            alici_id: row.user_id || null,
+            mesaj: `${row.alt_olcutler?.kod || 'Alt Ölçüt'} Değerlendirmesi ONAYLANDI.`,
+            tip: 'onay',
+            ilgili_kayit_id: String(row.alt_olcut_id)
+          });
+        }
+      } catch (e) {
+        console.warn("Bildirim tablosu hatası:", e);
+      }
+
+      setData(prev => prev.filter(item => item.alt_olcut_id !== row.alt_olcut_id));
     } catch (err: any) {
       alert('Onay sırasında hata: ' + err.message);
     } finally {
@@ -102,23 +144,66 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
     }
   };
 
-  const openRejectModal = (id: string) => {
+  const openRejectModal = (row: any) => {
     setRejectReason('');
-    setRejectingId(id);
+    setRejectingId(row.id);
+    setSelectedRejectRow(row);
     setIsRejectModalOpen(true);
   };
 
   const handleRejectSubmit = async () => {
-    if (!rejectingId || !rejectReason.trim()) { alert('Red nedeni giriniz.'); return; }
+    const targetRow = selectedRejectRow || data.find(item => item.id === rejectingId);
+    if (!targetRow || !rejectReason.trim()) { alert('Red nedeni giriniz.'); return; }
     setIsSubmitting(true);
     try {
-      const { error } = await supabase
+      const activePeriodId = targetRow.donem_id || selectedPeriod?.id;
+
+      // 1. PUKÖ tablosundaki o alt ölçüte ve döneme ait TÜM kayıtları 'Reddedildi' yap
+      let pukoQuery = supabase
         .from('puko_degerlendirmeleri')
-        .update({ durum: 'Reddedildi', red_nedeni: rejectReason })
-        .eq('id', rejectingId);
-      if (error) throw error;
-      setData(prev => prev.filter(item => item.id !== rejectingId));
+        .update({ durum: 'Reddedildi', red_nedeni: rejectReason.trim() })
+        .eq('alt_olcut_id', targetRow.alt_olcut_id);
+
+      if (activePeriodId) {
+        pukoQuery = pukoQuery.eq('donem_id', activePeriodId);
+      }
+      const { error: pukoError } = await pukoQuery;
+      if (pukoError) throw pukoError;
+
+      // 2. Özdeğerlendirme raporu tablosundaki onay durumunu da 'reddedildi' yap
+      try {
+        let ozdQuery = supabase
+          .from('ozdegerlendirme_raporlari')
+          .update({ onay_durumu: 'reddedildi', red_nedeni: rejectReason.trim() })
+          .eq('alt_olcut_id', String(targetRow.alt_olcut_id));
+        if (activePeriodId) {
+          ozdQuery = ozdQuery.eq('donem_id', activePeriodId);
+        }
+        await ozdQuery;
+      } catch (e) {
+        console.warn("Özdeğerlendirme raporu red senkronizasyonu:", e);
+      }
+
+      // 3. Bildirim tablosuna red bildirimi ekle
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        if (currentUser) {
+          await supabase.from('bildirimler').insert({
+            gonderen_id: currentUser.id,
+            alici_id: targetRow.user_id || null,
+            mesaj: `${targetRow.alt_olcutler?.kod || 'Alt Ölçüt'} Değerlendirmesi REDDEDİLDİ. Neden: ${rejectReason.trim()}`,
+            tip: 'red',
+            ilgili_kayit_id: String(targetRow.alt_olcut_id)
+          });
+        }
+      } catch (e) {
+        console.warn("Bildirim tablosu hatası:", e);
+      }
+
+      setData(prev => prev.filter(item => item.alt_olcut_id !== targetRow.alt_olcut_id));
       setIsRejectModalOpen(false);
+      setSelectedRejectRow(null);
+      setRejectingId(null);
     } catch (err: any) {
       alert('Red işlemi sırasında hata: ' + err.message);
     } finally {
@@ -276,7 +361,7 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
                         // Onaylayıcı (Admin veya Koordinatör): Onayla / Reddet butonları
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => handleApprove(row.id)}
+                            onClick={() => handleApprove(row)}
                             disabled={actionLoadingId === row.id}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-lg text-xs font-bold hover:bg-green-100 transition-all disabled:opacity-50"
                           >
@@ -284,7 +369,7 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
                             Onayla
                           </button>
                           <button
-                            onClick={() => openRejectModal(row.id)}
+                            onClick={() => openRejectModal(row)}
                             disabled={actionLoadingId === row.id}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs font-bold hover:bg-red-100 transition-all disabled:opacity-50"
                           >

@@ -182,8 +182,7 @@ export default function VeriOnayiPage() {
           .from('puko_degerlendirmeleri')
           .update({ durum: 'Onaylandı', red_nedeni: null })
           .eq('alt_olcut_id', report.alt_olcut_id)
-          .eq('donem_id', report.donem_id)
-          .eq('durum', 'Beklemede');
+          .eq('donem_id', report.donem_id);
 
         await logAction({
           supabase,
@@ -251,8 +250,7 @@ export default function VeriOnayiPage() {
           .from('puko_degerlendirmeleri')
           .update({ durum: 'Reddedildi', red_nedeni: rejectReason.trim() })
           .eq('alt_olcut_id', report.alt_olcut_id)
-          .eq('donem_id', report.donem_id)
-          .eq('durum', 'Beklemede');
+          .eq('donem_id', report.donem_id);
 
         await logAction({
           supabase,
