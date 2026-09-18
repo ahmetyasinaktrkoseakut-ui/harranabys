@@ -211,7 +211,7 @@
       "approved": "Onaylandı",
       "pending": "Beklemede",
       "rejected": "Reddedildi",
-      "maturity_radar": "YÖKAK Olgunluk Düzeyleri (A-E)",
+      "maturity_radar": "İAA Olgunluk Düzeyleri (A-E)",
       "no_maturity_data": "Henüz onaylanmış olgunluk puanı bulunmamaktadır.",
       "draft_pending_included": "Taslak / Bekleyen Puanlar Dahil"
     },
