@@ -267,6 +267,7 @@ export default function IzlemePage() {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover-card-effect relative">
+          {/* İAA Olgunluk Düzeyleri (A-E) Radar Grafiği */}
           <h3 className="flex items-center gap-2 font-semibold text-slate-700 mb-2">
             <Activity className="w-5 h-5 text-indigo-600" />
             {t('charts.maturity_radar')}
