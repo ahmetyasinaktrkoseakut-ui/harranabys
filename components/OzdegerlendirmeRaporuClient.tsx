@@ -29,6 +29,7 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
   
   const [isLoading, setIsLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isCoordinator, setIsCoordinator] = useState(false);
   const [isObserver, setIsObserver] = useState(false);
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -74,23 +75,25 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
           setIsReadOnly(true);
         }
 
+        let localUserIsCoordinator = false;
+        const { data: currentOlcut } = await supabase.from('alt_olcutler').select('kod').eq('id', resolvedParams.id).maybeSingle();
+        if (currentOlcut?.kod) {
+          const { data: coordData } = await supabase.from('baslik_koordinatorleri').select('baslik').eq('kullanici_id', user.id);
+          const assignedLetter = getAssignedLetter(coordData?.[0]?.baslik);
+          if (assignedLetter && currentOlcut.kod.startsWith(assignedLetter)) {
+            localUserIsCoordinator = true;
+          }
+        }
+        setIsCoordinator(localUserIsCoordinator);
+
         if (!localUserIsAdmin && !localUserIsObserver) {
-          const { data: currentOlcut } = await supabase.from('alt_olcutler').select('kod').eq('id', resolvedParams.id).maybeSingle();
           const { count: assignmentCount } = await supabase
             .from('kullanici_olcut_atamalari')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', user.id)
             .eq('alt_olcut_id', resolvedParams.id);
 
-          let isAuthorized = (assignmentCount || 0) > 0;
-
-          if (!isAuthorized && currentOlcut?.kod) {
-            const { data: coordData } = await supabase.from('baslik_koordinatorleri').select('baslik').eq('kullanici_id', user.id);
-            const assignedLetter = getAssignedLetter(coordData?.[0]?.baslik);
-            if (assignedLetter && currentOlcut.kod.startsWith(assignedLetter)) {
-              isAuthorized = true;
-            }
-          }
+          const isAuthorized = (assignmentCount || 0) > 0 || localUserIsCoordinator;
 
           if (!isAuthorized) {
             router.replace('/olcutler');
@@ -456,7 +459,7 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
       const { data: currentRecord } = await supabase
         .from('ozdegerlendirme_raporlari')
         .select('*')
-        .eq('alt_olcut_id', resolvedParams.id)
+        .eq('alt_olcut_id', String(resolvedParams.id))
         .eq('donem_id', selectedPeriod?.id)
         .maybeSingle();
 
@@ -512,7 +515,7 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
       const { data: currentRecord } = await supabase
         .from('ozdegerlendirme_raporlari')
         .select('*')
-        .eq('alt_olcut_id', resolvedParams.id)
+        .eq('alt_olcut_id', String(resolvedParams.id))
         .eq('donem_id', selectedPeriod?.id)
         .maybeSingle();
 
@@ -715,7 +718,7 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
             </div>
           )}
           
-          {isAdmin && (
+          {(isAdmin || isCoordinator) && (
             <>
               <button 
                 onClick={handleApprove}
