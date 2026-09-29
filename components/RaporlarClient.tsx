@@ -264,6 +264,11 @@ export default function RaporlarClient() {
             combinedText = combinedText.replace(/Olgunluk Düzeyi Puanı.*?\d\s*\/\s*\d/gi, '');
             combinedText = combinedText.replace(/<p style="color: #718096; font-style: italic; margin-top: 5px; font-size: 13px;">.*?<\/p>/gi, '');
             
+            if (isEn) {
+              combinedText = combinedText.replace(/\[\s*Kan[ıi]t\s*(\d+)\s*\]/gi, '[Evidence $1]');
+              combinedText = combinedText.replace(/>\s*Kan[ıi]t\s*(\d+)\s*</gi, '>Evidence $1<');
+            }
+            
             (ozdegerlendirme.kanitlar || []).forEach((k: any) => {
               let ev = allEvidences.find(e => e.url === k.url);
               if (!ev) {
@@ -305,7 +310,8 @@ export default function RaporlarClient() {
               htmlContent += `<p style='color: #c05621; font-size: 12px; font-weight: bold; margin-bottom: 5px;'>${isEn ? 'Attached Evidences' : t('attached_evidences')}</p>`;
               const evidenceLinks = uniqueEvidences.map((k) => {
                 const safeUrl = toProxyStorageUrl(k.url, origin);
-                return `<a href='${safeUrl}' style='color: #2b6cb0; text-decoration: none; font-size: 12px; display: block; margin-bottom: 3px;'>${k.no}. ${k.name}</a>`;
+                const prefix = isEn ? `Evidence ${k.no}` : `[Kanıt ${k.no}]`;
+                return `<a href='${safeUrl}' style='color: #2b6cb0; text-decoration: none; font-size: 12px; display: block; margin-bottom: 3px;'><b>${prefix}:</b> ${k.name}</a>`;
               }).join('');
               htmlContent += evidenceLinks;
               htmlContent += `</div>`;

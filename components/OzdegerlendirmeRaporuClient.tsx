@@ -208,7 +208,12 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
         <div class='content'>
           ${(() => {
             const origin = typeof window !== 'undefined' ? window.location.origin : '';
-            return sanitizeReportHtmlLinks(raporMetni || '', origin);
+            let text = raporMetni || '';
+            if (locale === 'en') {
+              text = text.replace(/\[\s*Kan[ıi]t\s*(\d+)\s*\]/gi, '[Evidence $1]');
+              text = text.replace(/>\s*Kan[ıi]t\s*(\d+)\s*</gi, '>Evidence $1<');
+            }
+            return sanitizeReportHtmlLinks(text, origin);
           })()}
         </div>
 
@@ -218,7 +223,8 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
           ${kanitlar.map((doc, idx) => {
             const origin = typeof window !== 'undefined' ? window.location.origin : '';
             const safeUrl = toProxyStorageUrl(doc.url, origin);
-            return `<li><strong id="kanit-${idx}">[Kanıt ${idx + 1}]</strong> <a class='kanit-link' href='${safeUrl}'>${doc.name}</a></li>`;
+            const label = locale === 'en' ? `[Evidence ${idx + 1}]` : `[Kanıt ${idx + 1}]`;
+            return `<li><strong id="kanit-${idx}">${label}</strong> <a class='kanit-link' href='${safeUrl}'>${doc.name}</a></li>`;
           }).join('')}
           ${kanitlar.length === 0 ? '' : '</ul>'}
         </div>
@@ -569,8 +575,9 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
     const doc = kanitlar[index];
     if (!doc) return;
 
-    // KESİNLİKLE [Kanıt X] formatında, yeni sekmede açılacak link
-    const anchorHTML = `&nbsp;<a href="${doc.url}" target="_blank" rel="noopener noreferrer" style="color: #2563eb; font-weight: bold; text-decoration: underline; cursor: pointer;">[Kanıt ${index + 1}]</a>&nbsp;`;
+    // Hedef 'en' ise [Evidence X], 'tr' ise [Kanıt X]
+    const label = target === 'en' ? `[Evidence ${index + 1}]` : `[Kanıt ${index + 1}]`;
+    const anchorHTML = `&nbsp;<a href="${doc.url}" target="_blank" rel="noopener noreferrer" style="color: #2563eb; font-weight: bold; text-decoration: underline; cursor: pointer;">${label}</a>&nbsp;`;
     
     if (target === 'tr') {
       if (editorRef.current) {
