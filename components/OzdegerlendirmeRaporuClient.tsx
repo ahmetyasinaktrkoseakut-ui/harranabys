@@ -516,50 +516,39 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
       alert(t('enter_reject_reason'));
       return;
     }
+    if (rejectReason.trim().length < 5) {
+      alert('Red gerekçesi en az 5 karakter olmalıdır.');
+      return;
+    }
     setIsActionSubmitting(true);
     try {
       const { data: currentRecord } = await supabase
         .from('ozdegerlendirme_raporlari')
-        .select('*')
+        .select('id')
         .eq('alt_olcut_id', String(resolvedParams.id))
         .eq('donem_id', selectedPeriod?.id)
         .maybeSingle();
 
-      if (currentRecord) {
-        const { error } = await supabase
-          .from('ozdegerlendirme_raporlari')
-          .update({ onay_durumu: 'reddedildi', red_nedeni: rejectReason })
-          .eq('id', currentRecord.id);
-        if (error) throw error;
-
-        // BİLDİRİM SENKRONİZASYONU: PUKÖ tablosundaki o alt ölçüte ait tüm kayıtları 'Reddedildi' yap
-        await supabase
-          .from('puko_degerlendirmeleri')
-          .update({ durum: 'Reddedildi', red_nedeni: rejectReason })
-          .eq('alt_olcut_id', resolvedParams.id)
-          .eq('donem_id', selectedPeriod?.id);
-
-        // Bildirim Ekleme İşlemi
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
-        const targetUserId = currentRecord.olusturan_id || currentRecord.kullanici_id || currentRecord.user_id || null;
-        
-        if (currentUser) {
-          try {
-            await supabase.from('bildirimler').insert({
-              gonderen_id: currentUser.id,
-              alici_id: targetUserId,
-              mesaj: `Özdeğerlendirme Raporunuz REDDEDİLDİ. Neden: ${rejectReason.trim()}`,
-              tip: 'red',
-              ilgili_kayit_id: resolvedParams.id
-            });
-          } catch (e) {
-            console.warn("Bildirim tablosu henüz oluşturulmamış olabilir.", e);
-          }
-        }
-
-        setOnayDurumu('reddedildi');
-        setRedNedeni(rejectReason);
+      if (!currentRecord?.id) {
+        throw new Error('Rapor kaydı bulunamadı.');
       }
+
+      const res = await fetch('/api/rapor/reddet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          raporId: currentRecord.id,
+          redNedeni: rejectReason.trim(),
+        }),
+      });
+
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(resData?.error || 'Rapor reddedilirken bir hata oluştu.');
+      }
+
+      setOnayDurumu('reddedildi');
+      setRedNedeni(rejectReason.trim());
       setIsRejectModalOpen(false);
       setRejectReason('');
       alert(t('reject_success'));

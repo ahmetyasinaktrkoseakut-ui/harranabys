@@ -154,56 +154,43 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
   const handleRejectSubmit = async () => {
     const targetRow = selectedRejectRow || data.find(item => item.id === rejectingId);
     if (!targetRow || !rejectReason.trim()) { alert('Red nedeni giriniz.'); return; }
+    if (rejectReason.trim().length < 5) { alert('Red gerekçesi en az 5 karakter olmalıdır.'); return; }
     setIsSubmitting(true);
     try {
       const activePeriodId = targetRow.donem_id || selectedPeriod?.id;
 
-      // 1. PUKÖ tablosundaki o alt ölçüte ve döneme ait TÜM kayıtları 'Reddedildi' yap
-      let pukoQuery = supabase
-        .from('puko_degerlendirmeleri')
-        .update({ durum: 'Reddedildi', red_nedeni: rejectReason.trim() })
-        .eq('alt_olcut_id', targetRow.alt_olcut_id);
+      // İlgili raporun benzersiz ID'sini tespit et
+      const { data: rep } = await supabase
+        .from('ozdegerlendirme_raporlari')
+        .select('id')
+        .eq('alt_olcut_id', String(targetRow.alt_olcut_id))
+        .eq('donem_id', activePeriodId)
+        .maybeSingle();
 
-      if (activePeriodId) {
-        pukoQuery = pukoQuery.eq('donem_id', activePeriodId);
-      }
-      const { error: pukoError } = await pukoQuery;
-      if (pukoError) throw pukoError;
-
-      // 2. Özdeğerlendirme raporu tablosundaki onay durumunu da 'reddedildi' yap
-      try {
-        let ozdQuery = supabase
-          .from('ozdegerlendirme_raporlari')
-          .update({ onay_durumu: 'reddedildi', red_nedeni: rejectReason.trim() })
-          .eq('alt_olcut_id', String(targetRow.alt_olcut_id));
-        if (activePeriodId) {
-          ozdQuery = ozdQuery.eq('donem_id', activePeriodId);
-        }
-        await ozdQuery;
-      } catch (e) {
-        console.warn("Özdeğerlendirme raporu red senkronizasyonu:", e);
+      if (!rep?.id) {
+        throw new Error('İlgili özdeğerlendirme raporu bulunamadı.');
       }
 
-      // 3. Bildirim tablosuna red bildirimi ekle
-      try {
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
-        if (currentUser) {
-          await supabase.from('bildirimler').insert({
-            gonderen_id: currentUser.id,
-            alici_id: targetRow.user_id || null,
-            mesaj: `${targetRow.alt_olcutler?.kod || 'Alt Ölçüt'} Değerlendirmesi REDDEDİLDİ. Neden: ${rejectReason.trim()}`,
-            tip: 'red',
-            ilgili_kayit_id: String(targetRow.alt_olcut_id)
-          });
-        }
-      } catch (e) {
-        console.warn("Bildirim tablosu hatası:", e);
+      // Tek merkezli atomik ret rotasını çağır
+      const res = await fetch('/api/rapor/reddet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          raporId: rep.id,
+          redNedeni: rejectReason.trim(),
+        }),
+      });
+
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(resData?.error || 'Red işlemi başarısız oldu.');
       }
 
       setData(prev => prev.filter(item => item.alt_olcut_id !== targetRow.alt_olcut_id));
       setIsRejectModalOpen(false);
       setSelectedRejectRow(null);
       setRejectingId(null);
+      setRejectReason('');
     } catch (err: any) {
       alert('Red işlemi sırasında hata: ' + err.message);
     } finally {

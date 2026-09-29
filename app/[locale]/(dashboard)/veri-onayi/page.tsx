@@ -206,59 +206,26 @@ export default function VeriOnayiPage() {
 
   const handleReject = async () => {
     if (!selectedReportId || !rejectReason.trim()) return;
+    if (rejectReason.trim().length < 5) {
+      setMessage({ type: 'error', text: 'Red gerekçesi en az 5 karakter olmalıdır.' });
+      return;
+    }
     
     try {
       setIsSubmitting(true);
       
-      // 1. Raporu al
-      const { data: report } = await supabase.from('ozdegerlendirme_raporlari').select('*').eq('id', selectedReportId).maybeSingle();
+      const res = await fetch('/api/rapor/reddet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          raporId: selectedReportId,
+          redNedeni: rejectReason.trim(),
+        }),
+      });
 
-      // 2. Raporu reddet
-      const { error: reportError } = await supabase
-        .from('ozdegerlendirme_raporlari')
-        .update({ 
-          onay_durumu: 'reddedildi', 
-          red_nedeni: rejectReason.trim() 
-        })
-        .eq('id', selectedReportId);
-
-      if (reportError) throw reportError;
-
-      // Bildirim Ekleme İşlemi
-      if (report) {
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
-        const targetUserId = report.olusturan_id || report.kullanici_id || report.user_id || null;
-        
-        if (currentUser) {
-          try {
-            await supabase.from('bildirimler').insert({
-              gonderen_id: currentUser.id,
-              alici_id: targetUserId,
-              mesaj: `Özdeğerlendirme Raporunuz REDDEDİLDİ. Neden: ${rejectReason.trim()}`,
-              tip: 'red',
-              ilgili_kayit_id: report.alt_olcut_id
-            });
-          } catch (e) {
-            console.warn("Bildirim tablosu henüz oluşturulmamış olabilir.", e);
-          }
-        }
-      }
-
-      // 3. PUKÖ Tablosunu güncelle
-      if (report) {
-        await supabase
-          .from('puko_degerlendirmeleri')
-          .update({ durum: 'Reddedildi', red_nedeni: rejectReason.trim() })
-          .eq('alt_olcut_id', report.alt_olcut_id)
-          .eq('donem_id', report.donem_id);
-
-        await logAction({
-          supabase,
-          islemTipi: 'UPDATE',
-          tabloAdi: 'ozdegerlendirme_raporlari (red)',
-          kayitId: report.id,
-          yeniVeri: { durum: 'Reddedildi', alt_olcut_id: report.alt_olcut_id, red_nedeni: rejectReason.trim() }
-        });
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(resData?.error || 'Rapor reddedilirken bir hata oluştu.');
       }
 
       setMessage({ type: 'success', text: 'Rapor reddedildi ve bildirimler güncellendi.' });
@@ -268,7 +235,7 @@ export default function VeriOnayiPage() {
       setRejectReason('');
     } catch (error: any) {
       console.error("Red hatası:", error);
-      setMessage({ type: 'error', text: 'Reddedilirken hata oluştu.' });
+      setMessage({ type: 'error', text: 'Reddedilirken hata oluştu: ' + (error?.message || '') });
     } finally {
       setIsSubmitting(false);
     }
