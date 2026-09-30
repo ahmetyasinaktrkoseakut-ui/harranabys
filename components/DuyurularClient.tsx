@@ -213,15 +213,15 @@ export default function DuyurularClient({
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden my-auto animate-in zoom-in-95 duration-200">
+            <div className="p-5 sm:p-6 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
               <h3 className="text-xl font-bold text-slate-800">{t('modal_title')}</h3>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-6 h-6" />
               </button>
             </div>
-            <form onSubmit={handleAddAnnouncement} className="p-6 space-y-4">
+            <form onSubmit={handleAddAnnouncement} className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1">
               
               {/* Hedef Kitle Seçimi */}
               <div>
@@ -377,13 +377,15 @@ export default function DuyurularClient({
                 </p>
               </div>
 
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full bg-blue-600 text-white py-3.5 rounded-xl font-bold hover:bg-blue-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-100"
-              >
-                {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : t('save')}
-              </button>
+              <div className="pt-2 flex-shrink-0">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full bg-blue-600 text-white py-3.5 rounded-xl font-bold hover:bg-blue-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-100"
+                >
+                  {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : t('save')}
+                </button>
+              </div>
             </form>
           </div>
         </div>
