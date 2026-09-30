@@ -2,17 +2,27 @@
 
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { useRouter } from '@/i18n/routing';
+import { useRouter, usePathname } from '@/i18n/routing';
 import { toast, Toaster } from 'react-hot-toast';
 
 export default function SessionTimeout() {
   const router = useRouter();
+  const pathname = usePathname();
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 30 minutes in milliseconds
   const TIMEOUT_DURATION = 30 * 60 * 1000;
 
+  // Halka açık sayfalarda veya giriş ekranında oturum zaman aşımı veya zorla çıkış çalıştırılmaz
+  const isPublicPage = 
+    pathname.startsWith('/faaliyet-bildirimi') || 
+    pathname.startsWith('/anket') || 
+    pathname.startsWith('/izlenceler') || 
+    pathname.startsWith('/sifre-yenile') || 
+    pathname.startsWith('/login');
+
   const resetTimer = () => {
+    if (isPublicPage) return;
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }
@@ -40,18 +50,29 @@ export default function SessionTimeout() {
   };
 
   useEffect(() => {
+    if (isPublicPage) return;
+
     const checkInactivityOnMount = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session) {
-        // Tarayıcı kapatılıp açıldıysa (sessionStorage silinmiştir) oturumu sonlandır
+        // Tarayıcı kapatılıp açıldıysa kontrol et
         const isSessionActive = sessionStorage.getItem('sb-session-active');
         if (!isSessionActive) {
-          await supabase.auth.signOut();
-          localStorage.removeItem('lastActivity');
-          router.refresh();
-          router.push('/login');
-          return;
+          const lastActivity = localStorage.getItem('lastActivity');
+          const isRecentlyActive = lastActivity && (Date.now() - Number(lastActivity) < TIMEOUT_DURATION);
+
+          if (isRecentlyActive) {
+            // Başka bir sekmede aktif oturum var veya yeni sekme açıldı; oturumu koru
+            sessionStorage.setItem('sb-session-active', 'true');
+          } else {
+            // Gerçekten tarayıcı kapatılmış veya oturum süresi dolmuş
+            await supabase.auth.signOut();
+            localStorage.removeItem('lastActivity');
+            router.refresh();
+            router.push('/login');
+            return;
+          }
         }
 
         const lastActivity = localStorage.getItem('lastActivity');
@@ -110,7 +131,7 @@ export default function SessionTimeout() {
       });
       subscription.unsubscribe();
     };
-  }, [router]);
+  }, [router, isPublicPage]);
 
   return <Toaster />;
 }
