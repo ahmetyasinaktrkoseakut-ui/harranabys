@@ -22,7 +22,8 @@
     "survey_management": "إدارة الاستبيانات",
     "coordinators": "المنسقون",
     "syllabus_data": "بيانات الخطط",
-    "audit_log": "سجل الأنشطة"
+    "audit_log": "سجل الأنشطة",
+    "external_evidence": "الأدلة الخارجية"
   },
   "Common": {
     "save": "حفظ",

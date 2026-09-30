@@ -22,7 +22,8 @@
     "survey_management": "Anket Yönetimi",
     "coordinators": "Koordinatörler",
     "syllabus_data": "İzlence Verileri",
-    "audit_log": "Aktivite Günlüğü"
+    "audit_log": "Aktivite Günlüğü",
+    "external_evidence": "Dış Kanıtlar"
   },
   "Common": {
     "save": "Kaydet",

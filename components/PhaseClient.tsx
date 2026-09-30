@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { Loader2, Plus, Info, Save, Link as LinkIcon, Settings, CalendarDays, ExternalLink, Trash2, Pencil, Eye } from 'lucide-react';
+import { Loader2, Plus, Info, Save, Link as LinkIcon, Settings, CalendarDays, ExternalLink, Trash2, Pencil, Eye, Inbox, CheckCircle2, XCircle, Clock, FileText, Download, Copy, Check } from 'lucide-react';
 import { useTranslations, useLocale } from 'next-intl';
 import { useRouter } from '@/i18n/routing';
 import { logAction } from '@/lib/logger';
@@ -67,6 +67,17 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
   const [annotatorModalOpen, setAnnotatorModalOpen] = useState(false);
   const [annotatorReadOnly, setAnnotatorReadOnly] = useState(false);
   const [selectedDocForAnnotation, setSelectedDocForAnnotation] = useState<{ doc: any; index: number } | null>(null);
+
+  // Dış Faaliyet Kanıtları State
+  const [disFaaliyetler, setDisFaaliyetler] = useState<any[]>([]);
+  const [isFaaliyetModalOpen, setIsFaaliyetModalOpen] = useState(false);
+  const [processingFaaliyetId, setProcessingFaaliyetId] = useState<string | null>(null);
+  const [faaliyetCitationModal, setFaaliyetCitationModal] = useState<{
+    isOpen: boolean;
+    citationText: string;
+    kanitNo: number;
+    docName: string;
+  } | null>(null);
 
   // Direct fresh database persistence to prevent React stale closure bugs
   const persistData = async (updatedDocs: any[], updatedAciklama: string) => {
@@ -425,6 +436,18 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
           setEylemler([{ iyilestirme_alani: '', bulgular: '', eylem_faaliyet: '', sorumlu: '', takvim: '', basari_gostergesi: '', izleme_durumu: '', riskler: '' }]);
         }
       }
+
+      // Uygulama aşamasında gelen dış faaliyet bildirimlerini çek
+      if (phaseId === 'uygulama' && selectedPeriod?.id) {
+        const { data: dfData } = await supabase
+          .from('dis_faaliyet_kanitlari')
+          .select('*')
+          .eq('alt_olcut_id', resolvedParams.id)
+          .eq('donem_id', selectedPeriod.id)
+          .order('olusturulma_tarihi', { ascending: false });
+
+        setDisFaaliyetler(dfData || []);
+      }
       
     } catch (error) {
       console.error("Fetch Data Error:", error);
@@ -772,6 +795,88 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
     }
   };
 
+  // Dış Faaliyet Kanıtı Aktarma İşlemi
+  const handleAktarFaaliyet = async (faaliyet: any) => {
+    if (!confirm(`"${faaliyet.faaliyet_adi}" başlıklı faaliyeti bu ölçütün Uygulama aşamasına kanıt olarak aktarmak istiyor musunuz?`)) {
+      return;
+    }
+
+    setProcessingFaaliyetId(faaliyet.id);
+    try {
+      const res = await fetch('/api/faaliyet-bildirimi/aktar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ faaliyetId: faaliyet.id }),
+      });
+
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        throw new Error(result.error || 'Aktarma işlemi gerçekleştirilemedi.');
+      }
+
+      // 1. Yeni eklenen kanıt tag'ini editöre ekle
+      const tagHtml = `<a data-evidence-id="${result.evidence_id}" href="${result.dosya.url}" target="_blank" rel="noopener noreferrer" style="color: #ea580c; font-weight: bold; text-decoration: underline; margin: 0 4px;">[Kanıt ${result.evidence_no}]</a>&nbsp;`;
+
+      let freshAciklama = aciklama;
+      if (editorRef.current) {
+        freshAciklama = editorRef.current.insertContentAndGetHTML(tagHtml) || editorRef.current.getHTML() || (aciklama + tagHtml);
+      } else {
+        freshAciklama += tagHtml;
+      }
+      setAciklama(freshAciklama);
+
+      // 2. Güncel verileri yeniden çek ve yeniden indeksle
+      await fetchData();
+      await reindexProjectEvidences();
+
+      // 3. Atıf metni modalını aç
+      if (result.atif_metni) {
+        setFaaliyetCitationModal({
+          isOpen: true,
+          citationText: result.atif_metni,
+          kanitNo: result.evidence_no,
+          docName: faaliyet.faaliyet_adi,
+        });
+      } else {
+        alert(`Faaliyet başarıyla [Kanıt ${result.evidence_no}] olarak eklendi.`);
+      }
+    } catch (err: any) {
+      console.error('Faaliyet aktarma hatası:', err);
+      alert(err.message || 'Aktarma işlemi sırasında hata oluştu.');
+    } finally {
+      setProcessingFaaliyetId(null);
+    }
+  };
+
+  // Dış Faaliyet Bildirimi Reddetme İşlemi
+  const handleReddetFaaliyet = async (faaliyet: any) => {
+    if (!confirm(`"${faaliyet.faaliyet_adi}" başlıklı faaliyeti reddetmek istediğinize emin misiniz?`)) {
+      return;
+    }
+
+    setProcessingFaaliyetId(faaliyet.id);
+    try {
+      const res = await fetch('/api/faaliyet-bildirimi/reddet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ faaliyetId: faaliyet.id }),
+      });
+
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        throw new Error(result.error || 'Reddetme işlemi gerçekleştirilemedi.');
+      }
+
+      await fetchData();
+      alert('Faaliyet bildirimi reddedildi.');
+    } catch (err: any) {
+      console.error('Faaliyet reddetme hatası:', err);
+      alert(err.message || 'Reddetme işlemi sırasında hata oluştu.');
+    } finally {
+      setProcessingFaaliyetId(null);
+    }
+  };
+
   // Onay ve Ret işlemleri Stage 7'ye (OzdegerlendirmeRaporuClient) taşındı.
 
   if (isLoading) {
@@ -844,6 +949,40 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
           </div>
 
           <div className="col-span-1 p-6 bg-[#F8FAFC]">
+            {phaseId === 'uygulama' && (
+              <div className="mb-5 p-3.5 bg-gradient-to-r from-indigo-50/90 to-blue-50/90 rounded-xl border border-indigo-200/80 shadow-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold shadow-xs flex-shrink-0">
+                      <Inbox className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800">Dış Faaliyet Kanıtları</h4>
+                      <p className="text-[11px] text-slate-500">
+                        {disFaaliyetler.filter((f) => f.durum === 'beklemede').length > 0 ? (
+                          <span className="text-amber-700 font-semibold">
+                            {disFaaliyetler.filter((f) => f.durum === 'beklemede').length} bekleyen bildirim var
+                          </span>
+                        ) : (
+                          'Bekleyen bildirim yok'
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsFaaliyetModalOpen(true)}
+                    className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-xs flex items-center gap-1.5"
+                  >
+                    <span>İncele</span>
+                    <span className="px-1.5 py-0.2 bg-indigo-700/80 rounded-full text-[10px]">
+                      {disFaaliyetler.length}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <h3 className="flex items-center justify-between font-semibold text-slate-700 mb-4 text-sm">
               <span className="flex items-center gap-2">
                 <LinkIcon className="w-4 h-4 text-slate-500" />
@@ -1091,6 +1230,208 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
       altOlcutId={resolvedParams.id}
       donemId={selectedPeriod?.id}
     />
+
+    {/* Dış Faaliyetler Listesi Modalı */}
+    {isFaaliyetModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-3xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[85vh]">
+          {/* Modal Header */}
+          <div className="p-6 bg-slate-50 border-b border-slate-200 flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md">
+                <Inbox className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-800">
+                  Gelen Dış Faaliyet Kanıtları ({olcutDetay?.kod})
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Hocaların bu ölçüt için bildirdiği faaliyet ve belgeleri inceleyip kanıtlarınıza dahil edebilirsiniz.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsFaaliyetModalOpen(false)}
+              className="w-8 h-8 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Modal Body */}
+          <div className="p-6 overflow-y-auto space-y-4 flex-1">
+            {disFaaliyetler.length === 0 ? (
+              <div className="text-center py-12 text-slate-400 space-y-2">
+                <Inbox className="w-10 h-10 mx-auto text-slate-300" />
+                <p className="text-sm font-medium">Bu ölçüte henüz iletilmiş bir dış faaliyet kaydı bulunmuyor.</p>
+              </div>
+            ) : (
+              disFaaliyetler.map((faaliyet) => (
+                <div
+                  key={faaliyet.id}
+                  className="p-5 bg-white rounded-xl border border-slate-200 shadow-xs space-y-3 relative group hover:border-indigo-200 transition-all"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          {faaliyet.faaliyet_turu}
+                        </span>
+                        <span className="text-xs text-slate-400">
+                          {new Date(faaliyet.faaliyet_tarihi).toLocaleDateString('tr-TR')}
+                        </span>
+                      </div>
+                      <h4 className="text-sm font-bold text-slate-800">{faaliyet.faaliyet_adi}</h4>
+                    </div>
+
+                    <div>
+                      {faaliyet.durum === 'beklemede' && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                          <Clock className="w-3 h-3" />
+                          Beklemede
+                        </span>
+                      )}
+                      {faaliyet.durum === 'onaylandi' && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <CheckCircle2 className="w-3 h-3" />
+                          [Kanıt {faaliyet.aktarilan_kanit_no}] Aktarıldı
+                        </span>
+                      )}
+                      {faaliyet.durum === 'reddedildi' && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                          <XCircle className="w-3 h-3" />
+                          Reddedildi
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Detay Bilgileri */}
+                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                    <div>
+                      <span className="font-semibold text-slate-700">Yapan Kişi:</span> {faaliyet.ad_soyad}
+                      {faaliyet.email && <span className="text-slate-400 ml-1">({faaliyet.email})</span>}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-700">Kurum / Yer:</span>{' '}
+                      {faaliyet.duzenleyen_kurum || '-'}
+                    </div>
+                  </div>
+
+                  {faaliyet.aciklama && (
+                    <p className="text-xs text-slate-600 bg-white p-2.5 rounded border border-slate-100 italic">
+                      {faaliyet.aciklama}
+                    </p>
+                  )}
+
+                  {/* Belge & Aksiyon Barı */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                    <a
+                      href={faaliyet.dosya_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                    >
+                      <FileText className="w-4 h-4 text-slate-400" />
+                      <span>{faaliyet.dosya_adi}</span>
+                      {faaliyet.dosya_boyutu && (
+                        <span className="text-[10px] text-slate-400">({faaliyet.dosya_boyutu} KB)</span>
+                      )}
+                    </a>
+
+                    {faaliyet.durum === 'beklemede' && !isReadOnly && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleReddetFaaliyet(faaliyet)}
+                          disabled={processingFaaliyetId === faaliyet.id}
+                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold border border-rose-200 transition-colors disabled:opacity-50"
+                        >
+                          Reddet
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAktarFaaliyet(faaliyet)}
+                          disabled={processingFaaliyetId === faaliyet.id}
+                          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-xs disabled:opacity-50"
+                        >
+                          {processingFaaliyetId === faaliyet.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          )}
+                          Kanıtlara Aktar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Modal Footer */}
+          <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsFaaliyetModalOpen(false)}
+              className="px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100 transition-colors"
+            >
+              Kapat
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Citation Template Modal */}
+    {faaliyetCitationModal?.isOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 space-y-4 animate-in fade-in zoom-in-95">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+              <Check className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">Kanıt Başarıyla Eklendi!</h3>
+              <p className="text-xs text-slate-500">
+                Faaliyet [Kanıt {faaliyetCitationModal.kanitNo}] olarak döküman listenize ve metne dahil edildi.
+              </p>
+            </div>
+          </div>
+
+          <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-600">Önerilen Metin İçi Atıf Cümlesi:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(faaliyetCitationModal.citationText);
+                  alert('Atıf metni panoya kopyalandı.');
+                }}
+                className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+              >
+                <Copy className="w-3 h-3" />
+                Kopyala
+              </button>
+            </div>
+            <p className="text-xs text-slate-700 font-mono select-all bg-white p-3 rounded-lg border border-slate-200 leading-relaxed">
+              {faaliyetCitationModal.citationText}
+            </p>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setFaaliyetCitationModal(null)}
+              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold"
+            >
+              Tamam
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
   </>
 );
 }

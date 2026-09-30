@@ -121,9 +121,26 @@ async function handleStorageProxy(
                 .select('baslik')
                 .eq('kullanici_id', user.id);
 
-              const assignedLetter = coordData?.[0]?.baslik ? coordData[0].baslik.trim().charAt(0).toUpperCase() : null;
-              if (assignedLetter && currentOlcut.kod.startsWith(assignedLetter)) {
-                hasAccess = true;
+              if (coordData && coordData.length > 0) {
+                const TOPIC_LETTER_MAP: Record<string, string> = {
+                  'kalite güvencesi': 'A',
+                  'kalite guvencesi': 'A',
+                  'eğitim-öğretim': 'B',
+                  'egitim-ogretim': 'B',
+                  'araştırma ve geliştirme': 'C',
+                  'arastirma ve gelistirme': 'C',
+                  'toplumsal katkı': 'D',
+                  'toplumsal katki': 'D',
+                  'yönetim sistemi': 'E',
+                  'yonetim sistemi': 'E',
+                };
+
+                const targetCode = currentOlcut.kod.trim().toUpperCase();
+                hasAccess = coordData.some((ca: any) => {
+                  const raw = (ca.baslik || '').trim().toLowerCase();
+                  const letter = TOPIC_LETTER_MAP[raw] || raw.charAt(0).toUpperCase();
+                  return letter && targetCode.startsWith(letter);
+                });
               }
             }
           }

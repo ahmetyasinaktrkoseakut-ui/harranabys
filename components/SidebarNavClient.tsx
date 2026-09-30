@@ -19,7 +19,7 @@ import {
   Activity
 } from 'lucide-react';
 import { LogoutButton } from './LogoutButton';
-import { Users, FileCheck, ClipboardCheck, History } from 'lucide-react';
+import { Users, FileCheck, ClipboardCheck, History, Inbox } from 'lucide-react';
 
 export default function SidebarNavClient({ isAdmin, isObserver = false, userId, hasAssignment, isCoordinator }: { isAdmin: boolean, isObserver?: boolean, userId: string, hasAssignment: boolean, isCoordinator?: boolean }) {
   const pathname = usePathname();
@@ -89,10 +89,16 @@ export default function SidebarNavClient({ isAdmin, isObserver = false, userId, 
               </Link>
             )}
             {(isAdmin || isCoordinator) && (
-              <Link href="/aktivite-gunlugu" className={getLinkClass('/aktivite-gunlugu')}>
-                <History className="w-5 h-5 flex-shrink-0" />
-                {t('audit_log')}
-              </Link>
+              <>
+                <Link href="/aktivite-gunlugu" className={getLinkClass('/aktivite-gunlugu')}>
+                  <History className="w-5 h-5 flex-shrink-0" />
+                  {t('audit_log')}
+                </Link>
+                <Link href="/dis-kanitlar" className={getLinkClass('/dis-kanitlar')}>
+                  <Inbox className="w-5 h-5 flex-shrink-0" />
+                  {t('external_evidence')}
+                </Link>
+              </>
             )}
             {isCoordinator && (
               <>

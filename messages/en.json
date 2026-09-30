@@ -22,7 +22,8 @@
     "survey_management": "Survey Management",
     "coordinators": "Coordinators",
     "syllabus_data": "Syllabus Data",
-    "audit_log": "Activity Log"
+    "audit_log": "Activity Log",
+    "external_evidence": "External Evidence"
   },
   "Common": {
     "save": "Save",
