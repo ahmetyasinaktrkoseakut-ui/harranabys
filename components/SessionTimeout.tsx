@@ -56,24 +56,9 @@ export default function SessionTimeout() {
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session) {
-        // Tarayıcı kapatılıp açıldıysa kontrol et
-        const isSessionActive = sessionStorage.getItem('sb-session-active');
-        if (!isSessionActive) {
-          const lastActivity = localStorage.getItem('lastActivity');
-          const isRecentlyActive = lastActivity && (Date.now() - Number(lastActivity) < TIMEOUT_DURATION);
+        // Oturum aktif, sessionStorage ve aktivite zamanlayıcısını başlat
+        sessionStorage.setItem('sb-session-active', 'true');
 
-          if (isRecentlyActive) {
-            // Başka bir sekmede aktif oturum var veya yeni sekme açıldı; oturumu koru
-            sessionStorage.setItem('sb-session-active', 'true');
-          } else {
-            // Gerçekten tarayıcı kapatılmış veya oturum süresi dolmuş
-            await supabase.auth.signOut();
-            localStorage.removeItem('lastActivity');
-            router.refresh();
-            router.push('/login');
-            return;
-          }
-        }
 
         const lastActivity = localStorage.getItem('lastActivity');
         if (lastActivity) {

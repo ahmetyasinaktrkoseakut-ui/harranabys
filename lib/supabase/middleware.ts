@@ -60,7 +60,11 @@ export async function updateSession(request: NextRequest) {
     if (!isLocalhost) {
       url.port = '';
     }
-    return NextResponse.redirect(url);
+    const response = NextResponse.redirect(url);
+    supabaseResponse.cookies.getAll().forEach(cookie => {
+      response.cookies.set(cookie.name, cookie.value, cookie);
+    });
+    return response;
   };
 
   if (
