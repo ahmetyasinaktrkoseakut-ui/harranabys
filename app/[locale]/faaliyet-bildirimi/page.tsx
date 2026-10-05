@@ -15,7 +15,8 @@ import {
   Tag, 
   Layers, 
   HelpCircle,
-  FileCheck
+  FileCheck,
+  ShieldCheck
 } from 'lucide-react';
 import Image from 'next/image';
 
@@ -426,6 +427,14 @@ export default function FaaliyetBildirimiPage() {
                 )}
               </label>
             </div>
+          </div>
+
+          {/* KVKK ve İAA Bilgilendirme Notu */}
+          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/60 text-slate-500 text-xs leading-relaxed flex items-start gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+            <span>
+              Bildirdiğiniz bilgiler ve ekli belgeler, 6698 sayılı KVKK kapsamında yalnızca fakültenin <strong>İlahiyat Akreditasyon Ajansı (İAA)</strong> akreditasyon süreçleri ve kurumsal faaliyet kanıt havuzunda değerlendirilmek üzere işlenmektedir.
+            </span>
           </div>
 
           {/* Gönder Butonu */}

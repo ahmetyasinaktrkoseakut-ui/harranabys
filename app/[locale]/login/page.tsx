@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase/client'
 import { Lock, Mail, User, Loader2, Eye, EyeOff, LayoutDashboard } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import LanguageSwitcher from '@/components/LanguageSwitcher'
+import KvkkModal from '@/components/KvkkModal'
 import { useParams } from 'next/navigation'
 
 export default function LoginPage() {
@@ -17,6 +18,7 @@ export default function LoginPage() {
   
   const [isLogin, setIsLogin] = useState(true)
   const [isForgotPassword, setIsForgotPassword] = useState(false)
+  const [showKvkkModal, setShowKvkkModal] = useState(false)
   const [adSoyad, setAdSoyad] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -335,6 +337,18 @@ export default function LoginPage() {
               </p>
             </div>
           )}
+
+          <div className="mt-8 pt-4 border-t border-slate-100 text-center">
+            <button 
+              type="button"
+              onClick={() => setShowKvkkModal(true)}
+              className="text-xs text-slate-400 hover:text-indigo-600 underline underline-offset-2 transition-colors cursor-pointer"
+            >
+              KVKK Aydınlatma ve Gizlilik Bildirimi
+            </button>
+          </div>
+
+          <KvkkModal isOpen={showKvkkModal} onClose={() => setShowKvkkModal(false)} />
         </div>
       </div>
 
