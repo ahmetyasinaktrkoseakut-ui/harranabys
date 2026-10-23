@@ -8,7 +8,7 @@ import { X, Download, FileText, Image as ImageIcon, ExternalLink, Loader2, Alert
 export default function GlobalFileViewer() {
   const [isOpen, setIsOpen] = useState(false);
   const [viewerUrl, setViewerUrl] = useState('');
-  const [viewerType, setViewerType] = useState<'pdf' | 'image' | 'docx'>('pdf');
+  const [viewerType, setViewerType] = useState<'pdf' | 'image' | 'docx' | 'video' | 'audio' | 'office'>('pdf');
   const [viewerName, setViewerName] = useState('');
   const [wordHtml, setWordHtml] = useState<string>('');
   const [loadingDocx, setLoadingDocx] = useState(false);
@@ -22,13 +22,18 @@ export default function GlobalFileViewer() {
         const url = anchor.href;
         const isDownload = anchor.hasAttribute('download');
 
-        const isSupabaseFile = url.includes('/storage/v1/object/public/');
+        const isSupabaseFile = url.includes('/storage/v1/object/public/') || url.includes('/storage/v1/object/sign/') || url.includes('/api/storage/');
         const cleanUrl = url.split(/[?#]/)[0].toLowerCase();
+        
         const isPdf = cleanUrl.endsWith('.pdf') || (isSupabaseFile && url.toLowerCase().includes('.pdf'));
-        const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(cleanUrl) || (isSupabaseFile && (url.toLowerCase().includes('.png') || url.toLowerCase().includes('.jpg') || url.toLowerCase().includes('.jpeg')));
+        const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(cleanUrl) || (isSupabaseFile && /\.(png|jpe?g|gif|webp|svg)/i.test(url));
         const isDocx = cleanUrl.endsWith('.docx') || (isSupabaseFile && url.toLowerCase().includes('.docx'));
+        const isVideo = /\.(mp4|webm|ogg|mov|m4v|mkv)$/i.test(cleanUrl) || (isSupabaseFile && /\.(mp4|webm|ogg|mov|m4v|mkv)/i.test(url));
+        const isAudio = /\.(mp3|wav|m4a|aac|ogg)$/i.test(cleanUrl) || (isSupabaseFile && /\.(mp3|wav|m4a|aac)/i.test(url));
+        const isOffice = /\.(xlsx?|pptx?|csv)$/i.test(cleanUrl) || (isSupabaseFile && /\.(xlsx?|pptx?|csv)/i.test(url));
 
-        if ((isPdf || isImage || isDocx) && !isDownload) {
+        // Supabase depolama dosyaları veya desteklenen formatlar tıklanırsa YENİ SEKME AÇILMASINI ENGELLE
+        if ((isPdf || isImage || isDocx || isVideo || isAudio || isOffice || isSupabaseFile) && !isDownload) {
           e.preventDefault();
           e.stopPropagation();
 
@@ -38,7 +43,13 @@ export default function GlobalFileViewer() {
             name = decoded.substring(decoded.lastIndexOf('/') + 1).split(/[?#]/)[0];
           } catch (_) {}
           setViewerName(name);
-          setViewerType(isPdf ? 'pdf' : isDocx ? 'docx' : 'image');
+
+          if (isVideo) setViewerType('video');
+          else if (isAudio) setViewerType('audio');
+          else if (isDocx) setViewerType('docx');
+          else if (isImage) setViewerType('image');
+          else if (isOffice) setViewerType('office');
+          else setViewerType('pdf');
 
           // Private Bucket Desteği: Yetkili Proxy rotası üzerinden erişim sağla
           const resolveAndOpen = async () => {
@@ -228,6 +239,44 @@ export default function GlobalFileViewer() {
               alt={viewerName} 
               className="max-w-full max-h-[75vh] object-contain rounded-xl shadow-lg border border-slate-200 dark:border-slate-800"
             />
+          ) : viewerType === 'video' ? (
+            <div className="w-full max-w-4xl flex flex-col items-center justify-center p-2">
+              <video 
+                src={viewerUrl} 
+                controls 
+                autoPlay 
+                playsInline
+                className="max-w-full max-h-[72vh] rounded-2xl shadow-2xl border border-slate-700 bg-black"
+              >
+                Tarayıcınız video etiketini desteklemiyor.
+              </video>
+            </div>
+          ) : viewerType === 'audio' ? (
+            <div className="w-full max-w-md p-8 bg-white dark:bg-[#14233c] rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 flex flex-col items-center gap-4 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 flex items-center justify-center shadow-inner">
+                <FileText className="w-8 h-8" />
+              </div>
+              <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">{viewerName}</h3>
+              <audio src={viewerUrl} controls autoPlay className="w-full mt-2" />
+            </div>
+          ) : viewerType === 'office' ? (
+            <div className="w-full max-w-md p-8 bg-white dark:bg-[#14233c] rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 text-center flex flex-col items-center">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 flex items-center justify-center mb-4 shadow-inner">
+                <FileText className="w-8 h-8" />
+              </div>
+              <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base mb-1 truncate max-w-full" title={viewerName}>
+                {viewerName}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+                Bu dosya formatı (Excel / Sunum) tarayıcı içi doğrudan önizlemeyi desteklememektedir. Dosyayı güvenli şekilde cihazınıza indirebilirsiniz.
+              </p>
+              <button 
+                onClick={handleDownload}
+                className="inline-flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer"
+              >
+                <Download className="w-4 h-4" /> Dosyayı Güvenle İndir
+              </button>
+            </div>
           ) : viewerType === 'docx' ? (
             <div className="w-full max-w-[850px] bg-white border border-slate-200 shadow-xl rounded-xl p-8 max-h-[75vh] overflow-y-auto font-sans leading-relaxed text-sm text-slate-900">
               <style jsx global>{`

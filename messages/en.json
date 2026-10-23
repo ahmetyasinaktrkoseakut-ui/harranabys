@@ -616,5 +616,23 @@
         "reddedildi": "Rejected"
       }
     }
+  },
+  "StressTest": {
+    "title": "PDCA Stress Test",
+    "description": "Validates evidence-citation integrity and methodological risks across the period.",
+    "run_test": "Run Stress Test",
+    "running": "Testing...",
+    "all_clear": "All PDCA phases fully comply with evidence and citation rules.",
+    "risks_found": "Identified Methodological Risks",
+    "phase": "Phase",
+    "criterion": "Sub-Criterion",
+    "explanation_missing": "Explanation text is missing or too short.",
+    "evidence_missing": "Evidence document is not uploaded.",
+    "citation_missing": "Uploaded evidence is not properly cited in the explanation.",
+    "puko_incomplete": "All 5 PDCA phases are not fully approved.",
+    "tab_english_odr": "English Self-Evaluation Issues",
+    "english_odr_missing_or_copied": "English self-evaluation is missing or unedited copy of Turkish text",
+    "english_odr_evidence_missing": "Missing evidence link in English self-evaluation",
+    "go_to_odr": "Go to Self-Evaluation"
   }
 }

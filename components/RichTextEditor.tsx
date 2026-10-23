@@ -43,27 +43,15 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(
     const editor = useEditor({
       editable: !readOnly,
       extensions: [
-        StarterKit.configure({
-          link: false,
-        }),
+        StarterKit,
         CustomLink.configure({
           openOnClick: false,
           HTMLAttributes: {
             rel: 'noopener noreferrer',
+            target: '_blank',
           },
         }),
       ],
-      editorProps: {
-        handleClick: (view, pos, event) => {
-          const target = event.target as HTMLElement | null;
-          const anchor = target?.closest('a');
-          if (anchor) {
-            event.preventDefault();
-            return false;
-          }
-          return false;
-        },
-      },
       content: content,
       onUpdate: ({ editor }) => {
         onChange(editor.getHTML());

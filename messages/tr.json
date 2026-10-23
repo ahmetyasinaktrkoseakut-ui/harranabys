@@ -615,5 +615,23 @@
         "reddedildi": "Reddedildi"
       }
     }
+  },
+  "StressTest": {
+    "title": "PUKÖ Stres Testi",
+    "description": "Dönem verilerindeki kanıt-atıf bütünlüğünü ve metodolojik riskleri denetler.",
+    "run_test": "Stres Testini Başlat",
+    "running": "Test Yapılıyor...",
+    "all_clear": "Tüm PUKÖ aşamaları kanıt ve atıf kurallarına tam uyumlu.",
+    "risks_found": "Tespit Edilen Metodolojik Riskler",
+    "phase": "Aşama",
+    "criterion": "Alt Ölçüt",
+    "explanation_missing": "Açıklama metni girilmemiş veya çok kısa.",
+    "evidence_missing": "Kanıt belgesi yüklenmemiş.",
+    "citation_missing": "Yüklenen kanıtlara açıklama metninde usulüne uygun atıf yapılmamış.",
+    "puko_incomplete": "5 PUKÖ aşaması eksiksiz onaylanmamış.",
+    "tab_english_odr": "İngilizce ÖDR Kusurları",
+    "english_odr_missing_or_copied": "İngilizce ÖDR eksik veya Türkçe metin kopyalanmış",
+    "english_odr_evidence_missing": "İngilizce ÖDR’de kanıt bağlantısı eksik",
+    "go_to_odr": "ÖDR'ye Git"
   }
 }

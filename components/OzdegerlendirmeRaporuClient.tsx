@@ -2,7 +2,8 @@
 
 import { useState, useEffect, use, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { Loader2, Info, FileSignature, FileText, CheckCircle2, FileSearch, Download, Save, Plus, Link as LinkIcon } from 'lucide-react';
+import { Loader2, Info, FileSignature, FileText, CheckCircle2, FileSearch, Download, Save, Plus, Link as LinkIcon , AlertTriangle, X } from 'lucide-react';
+import { degerlendirTekOdr } from '@/lib/pukoStresTesti';
 import StepPanel from '@/components/StepPanel';
 import { useTranslations, useLocale } from 'next-intl';
 import { useRouter } from '@/i18n/routing';
@@ -43,6 +44,7 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
 
   // Atıf (Kanıt) Yükleme Modalı
   const [isEvidenceModalOpen, setIsEvidenceModalOpen] = useState(false);
+  const [odrStressWarning, setOdrStressWarning] = useState<string | null>(null);
   const [newEvidenceName, setNewEvidenceName] = useState('');
   const [isUploadingInText, setIsUploadingInText] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -448,7 +450,28 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
         setRedNedeni(null);
       }
 
+
       alert(t('save_success'));
+
+      // İngilizce ÖDR Stres Testi Değerlendirmesi (Kayıt başarılı olduktan sonra bilgilendirici uyarı)
+      try {
+        const stressCheck = degerlendirTekOdr({
+          altOlcutId: resolvedParams.id,
+          kod: olcutDetay?.kod || '',
+          olcutAdi: olcutDetay?.olcut_adi || '',
+          icerikTr: raporMetni,
+          icerikEn: raporMetniEn,
+          kanitlar: kanitlar,
+        });
+
+        if (stressCheck.hasIssue && stressCheck.warningMessage) {
+          setOdrStressWarning(stressCheck.warningMessage);
+        } else {
+          setOdrStressWarning(null);
+        }
+      } catch (checkErr) {
+        console.error('ÖDR stres testi kontrol hatası:', checkErr);
+      }
       // fetchData() ÇAĞIRILMAYACAK - State koruması için sadece sessizce kaydetiyoruz
     } catch (err: any) {
       console.error(err);
@@ -514,10 +537,6 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
   const handleRejectSubmit = async () => {
     if (!rejectReason.trim()) {
       alert(t('enter_reject_reason'));
-      return;
-    }
-    if (rejectReason.trim().length < 5) {
-      alert('Red gerekçesi en az 5 karakter olmalıdır.');
       return;
     }
     setIsActionSubmitting(true);
@@ -737,6 +756,29 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
 
       <StepPanel activeStepId="rapor" altOlcutId={resolvedParams.id} />
 
+      {/* Stres Testi Bilgilendirici Uyarı Bannerı */}
+      {odrStressWarning && (
+        <div className="mb-6 p-4 rounded-xl border border-amber-200 bg-amber-50/90 text-amber-900 flex items-start justify-between gap-3 shadow-sm animate-in fade-in duration-300">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-bold text-amber-900">{odrStressWarning}</p>
+              <p className="text-[11px] text-amber-700 mt-0.5">
+                Raporunuz başarıyla kaydedildi; ancak akreditasyon stres testini kusursuz geçmek için İngilizce metni ve ilgili [Evidence N] bağlantılarını kontrol edebilirsiniz.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setOdrStressWarning(null)}
+            className="text-amber-500 hover:text-amber-800 p-1 rounded-lg hover:bg-amber-100/60 transition-colors shrink-0"
+            title="Kapat"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden mb-6 relative min-h-[400px]">
         {!raporOlusturuldu && !isGenerating ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-gradient-to-br from-blue-50/50 to-white">
@@ -852,7 +894,12 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
                             Kanıt {idx + 1}
                           </td>
                           <td className="py-3 px-4">
-                            <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-slate-700 hover:text-blue-600 font-medium flex items-center gap-2">
+                            <a 
+                              href={toProxyStorageUrl(doc.url, typeof window !== 'undefined' ? window.location.origin : '') || doc.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer" 
+                              className="text-slate-700 hover:text-blue-600 font-medium flex items-center gap-2"
+                            >
                               <LinkIcon className="w-4 h-4 text-slate-400" />
                               : ({doc.name})
                             </a>

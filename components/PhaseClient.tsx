@@ -2,7 +2,8 @@
 
 import { useState, useEffect, use } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { Loader2, Plus, Info, Save, Link as LinkIcon, Settings, CalendarDays, ExternalLink, Trash2, Pencil, Eye, Inbox, CheckCircle2, XCircle, Clock, FileText, Download, Copy, Check } from 'lucide-react';
+import { Loader2, Plus, Info, Save, Link as LinkIcon, Settings, CalendarDays, ExternalLink, Trash2, Pencil, Eye, Inbox, CheckCircle2, XCircle, Clock, FileText, Download, Copy, Check, AlertTriangle, X } from 'lucide-react';
+import { degerlendirTekAsama } from '@/lib/pukoStresTesti';
 import { useTranslations, useLocale } from 'next-intl';
 import { useRouter } from '@/i18n/routing';
 import { logAction } from '@/lib/logger';
@@ -78,6 +79,9 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
     kanitNo: number;
     docName: string;
   } | null>(null);
+
+  // Stres Testi Bilgilendirici Uyarı State'i
+  const [stressWarningMessage, setStressWarningMessage] = useState<string | null>(null);
 
   // Direct fresh database persistence to prevent React stale closure bugs
   const persistData = async (updatedDocs: any[], updatedAciklama: string) => {
@@ -629,7 +633,30 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
       }
 
       alert(t('save_success'));
-      fetchData(); 
+      fetchData();
+
+      // Akreditasyon Stres Testi Değerlendirmesi (Kayıt başarılı olduktan sonra bilgilendirici uyarı)
+      try {
+        const stressCheck = degerlendirTekAsama({
+          altOlcutId: resolvedParams.id,
+          kod: olcutDetay?.kod || '',
+          olcutAdi: olcutDetay?.olcut_adi || '',
+          pukoAsamasi: phaseId,
+          aciklama: aciklama,
+          kanitDosyalari: dokumanlar
+        });
+
+        if (stressCheck.isTextWithoutEvidence) {
+          setStressWarningMessage('Stres Testi Uyarısı: Açıklama metni kaydedildi ancak bu aşamaya henüz hiç kanıt belgesi eklenmedi.');
+        } else if (stressCheck.uncitedEvidences.length > 0) {
+          const uncitedList = stressCheck.uncitedEvidences.map(e => `[Kanıt ${e.kanit_no}]`).join(', ');
+          setStressWarningMessage(`Stres Testi Uyarısı: Eklenen kanıtlardan (${uncitedList}) metin içerisinde henüz atıf almamıştır.`);
+        } else {
+          setStressWarningMessage(null);
+        }
+      } catch (stErr) {
+        console.warn('Stres testi değerlendirme uyarısı üretilirken hata:', stErr);
+      } 
 
     } catch (error: any) {
       let errMsg = 'Bilinmeyen Hata Oluştu.';
@@ -914,6 +941,23 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
       </div>
 
       <StepPanel activeStepId={phaseId} altOlcutId={resolvedParams.id} />
+
+      {/* Akreditasyon Stres Testi Bütünlük Uyarısı */}
+      {stressWarningMessage && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between text-amber-900 text-xs font-bold animate-in fade-in slide-in-from-top-2 shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{stressWarningMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStressWarningMessage(null)}
+            className="text-amber-600 hover:text-amber-800 p-1 rounded-lg hover:bg-amber-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 border-b border-slate-200">
