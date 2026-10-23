@@ -34,7 +34,7 @@ export default function IzlemePage() {
   const [isStressModalOpen, setIsStressModalOpen] = useState(false);
   const [isTestingStress, setIsTestingStress] = useState(false);
   const [stressResults, setStressResults] = useState<StresTestiSonucu | null>(null);
-  const [stressActiveTab, setStressActiveTab] = useState<'odryok' | 'kanitfark' | 'bosasama' | 'ingilizceodr'>('odryok');
+  const [stressActiveTab, setStressActiveTab] = useState<'odryok' | 'kanitfark' | 'ingilizceodr'>('odryok');
 
   const getAsamaRoute = (altOlcutId: number | string, asama: string) => {
     switch (asama) {
@@ -242,7 +242,7 @@ export default function IzlemePage() {
       } else if (result.asamadaVarOdrdeYok.length > 0) {
         setStressActiveTab('kanitfark');
       } else {
-        setStressActiveTab(result.bosAsamalar?.length > 0 ? 'bosasama' : 'ingilizceodr');
+        setStressActiveTab('ingilizceodr');
       }
 
       setIsStressModalOpen(true);
@@ -495,21 +495,6 @@ export default function IzlemePage() {
             </button>
 
             <button
-              onClick={() => setStressActiveTab('bosasama')}
-              className={`pb-3 px-4 text-xs font-bold transition-colors border-b-2 flex items-center gap-2 shrink-0 ${
-                stressActiveTab === 'bosasama'
-                  ? 'border-rose-600 text-rose-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <span>3. Boş Aşamalar</span>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                (stressResults?.bosAsamalar?.length || 0) > 0 ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-600'
-              }`}>
-                {stressResults?.bosAsamalar?.length || 0}
-              </span>
-            </button>
-            <button
               onClick={() => setStressActiveTab('ingilizceodr')}
               className={`pb-3 px-4 text-xs font-bold transition-colors border-b-2 flex items-center gap-2 shrink-0 ${
                 stressActiveTab === 'ingilizceodr'
@@ -517,7 +502,7 @@ export default function IzlemePage() {
                   : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
             >
-              <span>4. İngilizce ÖDR Kusurları</span>
+              <span>3. İngilizce ÖDR Kusurları</span>
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
                 (stressResults?.ingilizceOdrSorunlari?.length || 0) > 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-200 text-slate-600'
               }`}>
@@ -605,42 +590,7 @@ export default function IzlemePage() {
                   ))}
                 </div>
               )
-            ) : stressActiveTab === 'bosasama' ? (
-              (stressResults?.bosAsamalar?.length || 0) === 0 ? (
-                <div className="p-8 text-center text-slate-400 text-sm">Tüm ölçüt aşamaları eksiksiz doldurulmuştur.</div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {stressResults?.bosAsamalar.map((item, idx) => (
-                    <div key={idx} className="py-3 flex items-center justify-between gap-4 hover:bg-slate-50 px-3 rounded-xl transition-colors">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="px-2.5 py-1 rounded-md bg-rose-50 text-rose-700 font-mono font-bold text-xs shrink-0">
-                          {item.kod}
-                        </span>
-                        <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600 shrink-0">
-                          {item.asama_adi}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-slate-800 truncate" title={item.durum_aciklamasi}>
-                            {item.durum_aciklamasi}
-                          </p>
-                          <p className="text-[11px] text-slate-400 truncate">
-                            {item.olcut_adi}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setIsStressModalOpen(false);
-                          router.push(getAsamaRoute(item.alt_olcut_id, item.puko_asamasi));
-                        }}
-                        className="text-xs font-bold text-rose-600 hover:text-rose-800 flex items-center gap-1 shrink-0 px-2.5 py-1 rounded-lg hover:bg-rose-50"
-                      >
-                        Aşamaya Git <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )) : (
+            ) : (
               (stressResults?.ingilizceOdrSorunlari?.length || 0) === 0 ? (
                 <div className="p-8 text-center text-slate-400 text-sm">İngilizce ÖDR içeriklerinde ve kanıt bağlantılarında herhangi bir kusur bulunamadı.</div>
               ) : (

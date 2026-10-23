@@ -504,24 +504,7 @@ export function calistirPukoStresTesti(params: {
       }
     });
 
-    // 3. Boş Aşamalar Kontrolü (PUKÖ 4 aşaması kontrol edilir)
-    PUKO_KONTROL_ASAMALARI.forEach(asama => {
-      const record = pukoStages.find(p => p.puko_asamasi === asama);
-      const isEmpty = !record || (isHtmlContentEmpty(record.aciklama) && (!record.kanit_dosyalari || record.kanit_dosyalari.length === 0));
-
-      if (isEmpty) {
-        bosAsamalar.push({
-          alt_olcut_id: olcut.id,
-          kod: olcut.kod,
-          olcut_adi: olcut.olcut_adi,
-          puko_asamasi: asama,
-          asama_adi: ASAMA_ISIMLERI[asama] || asama,
-          durum_aciklamasi: !record ? 'Kayıt bulunmuyor' : 'Açıklama ve kanıt boş',
-        });
-      }
-    });
-
-    // 4. İngilizce ÖDR Kontrolleri (Ölçütün ÖDR kaydı mevcutsa)
+    // 3. İngilizce ÖDR Kontrolleri (Ölçütün ÖDR kaydı mevcutsa)
     if (odr) {
       const enIssues = denetleIngilizceOdr({
         altOlcutId: olcut.id,
@@ -539,9 +522,9 @@ export function calistirPukoStresTesti(params: {
   return {
     odrAlinmamisOlcutler,
     asamadaVarOdrdeYok,
-    bosAsamalar,
+    bosAsamalar: [],
     ingilizceOdrSorunlari,
-    toplamSorun: odrAlinmamisOlcutler.length + asamadaVarOdrdeYok.length + bosAsamalar.length + ingilizceOdrSorunlari.length,
+    toplamSorun: odrAlinmamisOlcutler.length + asamadaVarOdrdeYok.length + ingilizceOdrSorunlari.length,
   };
 }
 
@@ -569,8 +552,9 @@ export function degerlendirTekAsama(params: {
     return { isEmpty: true, isTextWithoutEvidence: false, uncitedEvidences: [] };
   }
 
+  // Aşamaya kanıt belgesi yükleme zorunluluğu yoktur; açıklama metni tek başına tam geçerlidir.
   if (!emptyText && !hasEvidence) {
-    return { isEmpty: false, isTextWithoutEvidence: true, uncitedEvidences: [] };
+    return { isEmpty: false, isTextWithoutEvidence: false, uncitedEvidences: [] };
   }
 
   const html = aciklama || '';

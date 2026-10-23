@@ -646,9 +646,7 @@ export default function PhaseClient({ params, phaseId, phaseTitle, showEylemPlan
           kanitDosyalari: dokumanlar
         });
 
-        if (stressCheck.isTextWithoutEvidence) {
-          setStressWarningMessage('Stres Testi Uyarısı: Açıklama metni kaydedildi ancak bu aşamaya henüz hiç kanıt belgesi eklenmedi.');
-        } else if (stressCheck.uncitedEvidences.length > 0) {
+        if (stressCheck.uncitedEvidences.length > 0) {
           const uncitedList = stressCheck.uncitedEvidences.map(e => `[Kanıt ${e.kanit_no}]`).join(', ');
           setStressWarningMessage(`Stres Testi Uyarısı: Eklenen kanıtlardan (${uncitedList}) metin içerisinde henüz atıf almamıştır.`);
         } else {
