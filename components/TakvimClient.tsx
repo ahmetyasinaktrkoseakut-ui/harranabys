@@ -7,6 +7,7 @@ import { Link } from '@/i18n/routing';
 import { useLocale, useTranslations } from 'next-intl';
 import { getLocalizedField } from '@/lib/i18n-utils';
 import { usePeriod } from '@/contexts/PeriodContext';
+import { getAssignedLetter } from '@/lib/utils';
 
 interface EylemPlani {
   id: number;
@@ -56,15 +57,39 @@ export default function TakvimClient() {
           .order('id', { ascending: false });
 
         if (!userIsAdmin && !userIsObserver) {
-          // Personel: Sadece atandığı ölçütlerin eylem planlarını görebilir
+          // 1. Başlık Koordinatörlüğü Kontrolü (A-E Başlık Sorumluları)
+          const { data: coordData } = await supabase
+            .from('baslik_koordinatorleri')
+            .select('baslik')
+            .eq('kullanici_id', user.id);
+
+          const assignedLetters = (coordData || [])
+            .map(c => getAssignedLetter(c.baslik))
+            .filter(Boolean);
+
+          let coordOlcutIds: number[] = [];
+          if (assignedLetters.length > 0) {
+            const { data: allAlt } = await supabase
+              .from('alt_olcutler')
+              .select('id, kod');
+            coordOlcutIds = (allAlt || [])
+              .filter(o => o.kod && assignedLetters.some(letter => o.kod.startsWith(letter)))
+              .map(o => o.id);
+          }
+
+          // 2. Birim Düzeyi Ölçüt Atamaları Kontrolü
           const { data: atamalar } = await supabase
             .from('kullanici_olcut_atamalari')
             .select('alt_olcut_id')
             .eq('user_id', user.id)
             .eq('donem_id', selectedPeriod.id);
 
-          if (atamalar && atamalar.length > 0) {
-            const allowedAltOlcutIds = atamalar.map(a => a.alt_olcut_id);
+          const atananIds = (atamalar || []).map(a => a.alt_olcut_id);
+
+          // Koordinatörlük ve/veya birim atamalarını birleştir
+          const allowedAltOlcutIds = Array.from(new Set([...coordOlcutIds, ...atananIds]));
+
+          if (allowedAltOlcutIds.length > 0) {
             query = query.in('alt_olcut_id', allowedAltOlcutIds);
           } else {
             setKayitlar([]);
@@ -100,6 +125,8 @@ export default function TakvimClient() {
             }));
             
           setKayitlar(filteredData as EylemPlani[]);
+        } else {
+          setKayitlar([]);
         }
 
       } catch (error) {
