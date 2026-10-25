@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { X, Download, FileText, ExternalLink, Loader2, AlertTriangle } from 'lucide-react';
+import { isInternalStorageUrl } from '@/lib/utils';
 
 export default function GlobalFileViewer() {
   const [isOpen, setIsOpen] = useState(false);
@@ -14,27 +15,49 @@ export default function GlobalFileViewer() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
+    const handleGlobalMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const anchor = target?.closest('a');
+      if (anchor && anchor.href) {
+        if (anchor.getAttribute('data-bypass-viewer') === 'true') return;
+        const appOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+        const isInternal = isInternalStorageUrl(anchor.href, appOrigin);
+        if (isInternal && !anchor.hasAttribute('download')) {
+          anchor.removeAttribute('target');
+          anchor.target = '_self';
+        } else if (!isInternal && !anchor.hasAttribute('download')) {
+          anchor.target = '_blank';
+          anchor.rel = 'noopener noreferrer';
+        }
+      }
+    };
+
     const handleGlobalClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       const anchor = target.closest('a');
       if (anchor && anchor.href) {
+        if (anchor.getAttribute('data-bypass-viewer') === 'true') return;
         const url = anchor.href;
         const isDownload = anchor.hasAttribute('download');
+        const appOrigin = typeof window !== 'undefined' ? window.location.origin : '';
 
-        const isSupabaseFile = url.includes('/storage/v1/object/public/') || url.includes('/storage/v1/object/sign/') || url.includes('/api/storage/');
-        const cleanUrl = url.split(/[?#]/)[0].toLowerCase();
+        // SADECE ve kesinlikle bu uygulamanın depolama / kanıt dosyası ise müdahale et
+        const isInternal = isInternalStorageUrl(url, appOrigin);
 
-        const isPdf = cleanUrl.endsWith('.pdf') || (isSupabaseFile && url.toLowerCase().includes('.pdf'));
-        const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(cleanUrl) || (isSupabaseFile && /\.(png|jpe?g|gif|webp|svg)/i.test(url));
-        const isDocx = cleanUrl.endsWith('.docx') || (isSupabaseFile && url.toLowerCase().includes('.docx'));
-        const isVideo = /\.(mp4|webm|ogg|mov|m4v|mkv)$/i.test(cleanUrl) || (isSupabaseFile && /\.(mp4|webm|ogg|mov|m4v|mkv)/i.test(url));
-        const isAudio = /\.(mp3|wav|m4a|aac|ogg)$/i.test(cleanUrl) || (isSupabaseFile && /\.(mp3|wav|m4a|aac)/i.test(url));
-        const isOffice = /\.(xlsx?|pptx?|csv)$/i.test(cleanUrl) || (isSupabaseFile && /\.(xlsx?|pptx?|csv)/i.test(url));
-
-        // Supabase depolama dosyaları veya desteklenen formatlar tıklanırsa YENİ SEKME AÇILMASINI ENGELLE
-        if ((isPdf || isImage || isDocx || isVideo || isAudio || isOffice || isSupabaseFile) && !isDownload) {
+        if (isInternal && !isDownload) {
+          // Dahili linklerde tarayıcının yeni sekme açmasını engelle
+          anchor.removeAttribute('target');
+          anchor.target = '_self';
           e.preventDefault();
           e.stopPropagation();
+          e.stopImmediatePropagation();
+
+          const cleanUrl = url.split(/[?#]/)[0].toLowerCase();
+                    const isImage = /\.(png|jpe?g|gif|webp|svg)/i.test(cleanUrl) || /\.(png|jpe?g|gif|webp|svg)/i.test(url);
+          const isDocx = cleanUrl.endsWith('.docx') || url.toLowerCase().includes('.docx');
+          const isVideo = /\.(mp4|webm|ogg|mov|m4v|mkv)/i.test(cleanUrl) || /\.(mp4|webm|ogg|mov|m4v|mkv)/i.test(url);
+          const isAudio = /\.(mp3|wav|m4a|aac|ogg)/i.test(cleanUrl) || /\.(mp3|wav|m4a|aac)/i.test(url);
+          const isOffice = /\.(xlsx?|pptx?|csv)/i.test(cleanUrl) || /\.(xlsx?|pptx?|csv)/i.test(url);
 
           let name = 'Doküman';
           try {
@@ -54,51 +77,49 @@ export default function GlobalFileViewer() {
           const resolveAndOpen = async () => {
             setAuthError(null);
 
-            if (url.includes('/storage/v1/object/') || url.includes('/api/storage/')) {
-              try {
-                let bucket = 'dokumanlar';
-                let filePath = '';
-                if (url.includes('/storage/v1/object/')) {
-                  const parts = url.split('/storage/v1/object/');
-                  const afterObject = parts[1]?.replace(/^public\//, '')?.replace(/^sign\//, '') || '';
-                  const [b, ...pathParts] = afterObject.split('?')[0].split('/');
-                  bucket = b;
-                  filePath = pathParts.join('/');
-                } else if (url.includes('/api/storage/')) {
-                  const parts = url.split('/api/storage/')[1]?.split('?')[0].split('/');
-                  bucket = parts[0];
-                  filePath = parts.slice(1).join('/');
-                }
-
-                if (bucket && filePath) {
-                  const proxyUrl = `/api/storage/${bucket}/${filePath}`;
-                  // Probe proxy for authorization (Gerçek HEAD denetimi)
-                  const probe = await fetch(proxyUrl, { method: 'HEAD' });
-
-                  if (probe.status === 200) {
-                    setViewerUrl(proxyUrl);
-                    setIsOpen(true);
-                    return;
-                  } else if (probe.status === 401 || probe.status === 403) {
-                    // KESİN KURAL: Proxy 200 değilse ASLA public URL veya eski signed URL kullanılmaz!
-                    setAuthError('Erişim Reddedildi: Bu dosyayı görüntüleme yetkiniz bulunmamaktadır.');
-                    setViewerUrl('');
-                    setIsOpen(true);
-                    return;
-                  } else {
-                    setAuthError('Dosyaya erişilemedi veya dosya bulunamadı.');
-                    setViewerUrl('');
-                    setIsOpen(true);
-                    return;
-                  }
-                }
-              } catch (err) {
-                console.error('Proxy yetki kontrolü hatası:', err);
-                setAuthError('Dosya güvenlik doğrulaması yapılamadı.');
-                setViewerUrl('');
-                setIsOpen(true);
-                return;
+            try {
+              let bucket = 'dokumanlar';
+              let filePath = '';
+              if (url.includes('/storage/v1/object/')) {
+                const parts = url.split('/storage/v1/object/');
+                const afterObject = parts[1]?.replace(/^public\//, '')?.replace(/^sign\//, '') || '';
+                const [b, ...pathParts] = afterObject.split('?')[0].split('/');
+                bucket = b;
+                filePath = pathParts.join('/');
+              } else if (url.includes('/api/storage/')) {
+                const parts = url.split('/api/storage/')[1]?.split('?')[0].split('/');
+                bucket = parts[0];
+                filePath = parts.slice(1).join('/');
               }
+
+              if (bucket && filePath) {
+                const proxyUrl = `/api/storage/${bucket}/${filePath}`;
+                // Probe proxy for authorization (Gerçek HEAD denetimi)
+                const probe = await fetch(proxyUrl, { method: 'HEAD' });
+
+                if (probe.status === 200) {
+                  setViewerUrl(proxyUrl);
+                  setIsOpen(true);
+                  return;
+                } else if (probe.status === 401 || probe.status === 403) {
+                  // KESİN KURAL: Proxy 200 değilse ASLA public URL veya eski signed URL kullanılmaz!
+                  setAuthError('Erişim Reddedildi: Bu dosyayı görüntüleme yetkiniz bulunmamaktadır.');
+                  setViewerUrl('');
+                  setIsOpen(true);
+                  return;
+                } else {
+                  setAuthError('Dosyaya erişilemedi veya dosya bulunamadı.');
+                  setViewerUrl('');
+                  setIsOpen(true);
+                  return;
+                }
+              }
+            } catch (err) {
+              console.error('Proxy yetki kontrolü hatası:', err);
+              setAuthError('Dosya güvenlik doğrulaması yapılamadı.');
+              setViewerUrl('');
+              setIsOpen(true);
+              return;
             }
 
             // Storage dışı URL (ör. harici bağlantı)
@@ -107,12 +128,19 @@ export default function GlobalFileViewer() {
           };
 
           resolveAndOpen();
+        } else if (!isInternal && !isDownload) {
+          anchor.target = '_blank';
+          anchor.rel = 'noopener noreferrer';
         }
       }
     };
 
+    document.addEventListener('mousedown', handleGlobalMouseDown, { capture: true });
     document.addEventListener('click', handleGlobalClick, { capture: true });
-    return () => document.removeEventListener('click', handleGlobalClick, { capture: true });
+    return () => {
+      document.removeEventListener('mousedown', handleGlobalMouseDown, { capture: true });
+      document.removeEventListener('click', handleGlobalClick, { capture: true });
+    };
   }, []);
 
   useEffect(() => {
@@ -203,6 +231,7 @@ export default function GlobalFileViewer() {
                   href={viewerUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  data-bypass-viewer="true"
                   className="p-2 hover:bg-slate-100 dark:hover:bg-[#1e2d4a] rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-colors flex items-center gap-1.5 text-xs font-bold"
                   title="Yeni Sekmede Aç"
                 >

@@ -3,6 +3,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import { Bold, Italic, List, ListOrdered, Link as LinkIcon, Type } from 'lucide-react';
 import { useEffect, forwardRef, useImperativeHandle } from 'react';
+import { isInternalStorageUrl } from '@/lib/utils';
 
 interface RichTextEditorProps {
   content: string;
@@ -43,15 +44,32 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(
     const editor = useEditor({
       editable: !readOnly,
       extensions: [
-        StarterKit,
+        StarterKit.configure({
+          link: false,
+        }),
         CustomLink.configure({
           openOnClick: false,
           HTMLAttributes: {
             rel: 'noopener noreferrer',
-            target: '_blank',
           },
         }),
       ],
+      editorProps: {
+        handleClick: (view, pos, event) => {
+          const target = event.target as HTMLElement | null;
+          const anchor = target?.closest('a');
+          if (anchor) {
+            const url = anchor.href;
+            const appOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+            if (isInternalStorageUrl(url, appOrigin)) {
+              event.preventDefault();
+              event.stopPropagation();
+              return true;
+            }
+          }
+          return false;
+        },
+      },
       content: content,
       onUpdate: ({ editor }) => {
         onChange(editor.getHTML());
@@ -183,4 +201,3 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(
 RichTextEditor.displayName = 'RichTextEditor';
 
 export default RichTextEditor;
-

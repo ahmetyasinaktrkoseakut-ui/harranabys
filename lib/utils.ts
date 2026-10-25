@@ -41,11 +41,68 @@ export function validateFileSize(file: File): { valid: boolean; error?: string }
 }
 
 /**
+ * Validates whether a given URL points strictly to this application's internal storage
+ * (either a relative /api/storage/ path, a same-origin absolute /api/storage/ path,
+ * or the project's configured Supabase storage host).
+ * Fails safely (returns false) if Supabase URL configuration is missing or malformed.
+ */
+export function isInternalStorageUrl(url?: string, appOrigin?: string): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+
+  // 1. Göreceli proxy yolu: /api/storage/
+  if (trimmed.startsWith('/api/storage/')) {
+    return true;
+  }
+
+  const currentOrigin = (appOrigin || (typeof window !== 'undefined' ? window.location?.origin : '') || '').trim();
+
+  try {
+    const parsed = new URL(trimmed, currentOrigin || 'http://localhost');
+
+    // 2. Tam URL ile aynı-origin /api/storage/ denetimi
+    if (parsed.pathname.startsWith('/api/storage/')) {
+      if (currentOrigin) {
+        try {
+          const parsedOrigin = new URL(currentOrigin).origin;
+          if (parsed.origin === parsedOrigin) {
+            return true;
+          }
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    }
+
+    // 3. Yapılandırılmış proje Supabase depolama adresi denetimi (Fail-Safe)
+    if (trimmed.includes('/storage/v1/object/')) {
+      const supabaseEnv = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      if (!supabaseEnv) return false;
+      try {
+        const parsedSupabase = new URL(supabaseEnv);
+        if (parsed.host === parsedSupabase.host && parsed.pathname.includes('/storage/v1/object/')) {
+          return true;
+        }
+      } catch {
+        return false;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+/**
  * Converts any legacy Supabase storage URL or relative proxy path
- * into a fully-qualified application proxy URL for Word reports.
+ * into a fully-qualified application proxy URL for Word reports and links.
  */
 export function toProxyStorageUrl(url: string, origin: string): string {
   if (!url) return url;
+  if (!isInternalStorageUrl(url, origin)) return url;
   const trimmed = url.trim();
   // Supabase storage format (e.g. .../storage/v1/object/public/bucket/path or .../storage/v1/object/sign/bucket/path)
   if (trimmed.includes('/storage/v1/object/')) {
@@ -71,20 +128,26 @@ export function healSplitEvidenceTags(html: string): string {
     (match, u1, u2, word, u3, numPart) => {
       const cleanNum = numPart.replace(/^[t\s]+/, '').replace(/\]$/, '').trim();
       const properWord = word.toLowerCase().includes('edivence') ? 'Evidence' : word;
-      return `<a target="_blank" rel="noopener noreferrer" href="${u1}"><strong><u>[${properWord} ${cleanNum}]</u></strong></a>`;
+      return `<a rel="noopener noreferrer" href="${u1}"><strong><u>[${properWord} ${cleanNum}]</u></strong></a>`;
     }
   );
 }
 
 /**
  * Replaces href attributes in report HTML so all internal document links point to the proxy URL,
+ * strips target="_blank" specifically and only from internal storage links,
  * and heals any fragmented / split evidence link tags created by rich-text copy-pasting.
  */
 export function sanitizeReportHtmlLinks(html: string, origin: string): string {
   if (!html) return html;
   const healed = healSplitEvidenceTags(html);
-  return healed.replace(/href=(["'])(.*?)\1/gi, (match, quote, href) => {
-    const converted = toProxyStorageUrl(href, origin);
-    return `href=${quote}${converted}${quote}`;
+  return healed.replace(/<a\s+([^>]*?)href=(["'])(.*?)\2([^>]*?)>/gi, (match, beforeHref, quote, href, afterHref) => {
+    if (isInternalStorageUrl(href, origin)) {
+      const convertedHref = toProxyStorageUrl(href, origin);
+      const cleanBefore = beforeHref.replace(/\s*target=(["'])_blank\1/gi, '');
+      const cleanAfter = afterHref.replace(/\s*target=(["'])_blank\1/gi, '');
+      return `<a ${cleanBefore}href=${quote}${convertedHref}${quote}${cleanAfter}>`;
+    }
+    return match;
   });
 }

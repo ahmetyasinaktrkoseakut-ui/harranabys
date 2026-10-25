@@ -472,7 +472,7 @@ export default function RaporlarClient() {
                                 <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
                                   <div
                                     className="prose prose-sm max-w-none prose-slate"
-                                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(combinedText) }}
+                                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(sanitizeReportHtmlLinks(combinedText, typeof window !== 'undefined' ? window.location.origin : '')) }}
                                   />
                                 </div>
 
