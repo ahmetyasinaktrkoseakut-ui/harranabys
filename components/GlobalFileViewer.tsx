@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import DOMPurify from 'dompurify';
-import { supabase } from '@/lib/supabase/client';
-import { X, Download, FileText, Image as ImageIcon, ExternalLink, Loader2, AlertTriangle } from 'lucide-react';
+import { X, Download, FileText, ExternalLink, Loader2, AlertTriangle } from 'lucide-react';
 
 export default function GlobalFileViewer() {
   const [isOpen, setIsOpen] = useState(false);
@@ -24,7 +23,7 @@ export default function GlobalFileViewer() {
 
         const isSupabaseFile = url.includes('/storage/v1/object/public/') || url.includes('/storage/v1/object/sign/') || url.includes('/api/storage/');
         const cleanUrl = url.split(/[?#]/)[0].toLowerCase();
-        
+
         const isPdf = cleanUrl.endsWith('.pdf') || (isSupabaseFile && url.toLowerCase().includes('.pdf'));
         const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(cleanUrl) || (isSupabaseFile && /\.(png|jpe?g|gif|webp|svg)/i.test(url));
         const isDocx = cleanUrl.endsWith('.docx') || (isSupabaseFile && url.toLowerCase().includes('.docx'));
@@ -41,7 +40,7 @@ export default function GlobalFileViewer() {
           try {
             const decoded = decodeURIComponent(url);
             name = decoded.substring(decoded.lastIndexOf('/') + 1).split(/[?#]/)[0];
-          } catch (_) {}
+          } catch {}
           setViewerName(name);
 
           if (isVideo) setViewerType('video');
@@ -117,10 +116,13 @@ export default function GlobalFileViewer() {
   }, []);
 
   useEffect(() => {
+    let isCancelled = false;
+
     if (isOpen && viewerType === 'docx' && viewerUrl) {
-      setLoadingDocx(true);
-      setWordHtml('');
       const renderWord = async () => {
+        if (isCancelled) return;
+        setLoadingDocx(true);
+        setWordHtml('');
         try {
           if (!(window as any).mammoth) {
             const mScript = document.createElement('script');
@@ -150,6 +152,10 @@ export default function GlobalFileViewer() {
       };
       renderWord();
     }
+
+    return () => {
+      isCancelled = true;
+    };
   }, [isOpen, viewerType, viewerUrl]);
 
   const handleDownload = async () => {
@@ -164,7 +170,7 @@ export default function GlobalFileViewer() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(blobUrl);
-    } catch (_) {
+    } catch {
       const link = document.createElement('a');
       link.href = viewerUrl;
       link.download = viewerName;
@@ -179,7 +185,7 @@ export default function GlobalFileViewer() {
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 md:p-6 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-300">
       <div className="bg-white dark:bg-[#0f1e36] w-full max-w-5xl rounded-3xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
-        
+
         {/* Header */}
         <div className="p-4 border-b border-slate-100 dark:border-slate-800/80 flex items-center justify-between bg-slate-50 dark:bg-[#0d1b30]">
           <div className="flex items-center gap-3">
@@ -193,16 +199,16 @@ export default function GlobalFileViewer() {
           <div className="flex items-center gap-2">
             {!authError && (
               <>
-                <a 
-                  href={viewerUrl} 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
+                <a
+                  href={viewerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="p-2 hover:bg-slate-100 dark:hover:bg-[#1e2d4a] rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-colors flex items-center gap-1.5 text-xs font-bold"
                   title="Yeni Sekmede Aç"
                 >
                   <ExternalLink className="w-4 h-4" /> Yeni Sekmede Aç
                 </a>
-                <button 
+                <button
                   onClick={handleDownload}
                   className="p-2 hover:bg-slate-100 dark:hover:bg-[#1e2d4a] rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold"
                   title="İndir"
@@ -212,7 +218,7 @@ export default function GlobalFileViewer() {
                 <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 mx-1"></div>
               </>
             )}
-            <button 
+            <button
               onClick={() => setIsOpen(false)}
               className="p-2 hover:bg-slate-100 dark:hover:bg-[#1e2d4a] rounded-xl text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer"
             >
@@ -234,17 +240,17 @@ export default function GlobalFileViewer() {
               </p>
             </div>
           ) : viewerType === 'image' ? (
-            <img 
-              src={viewerUrl} 
-              alt={viewerName} 
+            <img
+              src={viewerUrl}
+              alt={viewerName}
               className="max-w-full max-h-[75vh] object-contain rounded-xl shadow-lg border border-slate-200 dark:border-slate-800"
             />
           ) : viewerType === 'video' ? (
             <div className="w-full max-w-4xl flex flex-col items-center justify-center p-2">
-              <video 
-                src={viewerUrl} 
-                controls 
-                autoPlay 
+              <video
+                src={viewerUrl}
+                controls
+                autoPlay
                 playsInline
                 className="max-w-full max-h-[72vh] rounded-2xl shadow-2xl border border-slate-700 bg-black"
               >
@@ -270,7 +276,7 @@ export default function GlobalFileViewer() {
               <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
                 Bu dosya formatı (Excel / Sunum) tarayıcı içi doğrudan önizlemeyi desteklememektedir. Dosyayı güvenli şekilde cihazınıza indirebilirsiniz.
               </p>
-              <button 
+              <button
                 onClick={handleDownload}
                 className="inline-flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer"
               >
@@ -304,9 +310,9 @@ export default function GlobalFileViewer() {
               )}
             </div>
           ) : (
-            <iframe 
-              src={`${viewerUrl}#toolbar=0`} 
-              title={viewerName} 
+            <iframe
+              src={`${viewerUrl}#toolbar=0`}
+              title={viewerName}
               className="w-full h-[75vh] rounded-xl border border-slate-200 dark:border-slate-800 bg-white"
             />
           )}

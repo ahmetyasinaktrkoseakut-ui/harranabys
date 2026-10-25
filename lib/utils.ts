@@ -10,7 +10,7 @@ export function getAssignedLetter(baslik?: string): string {
 
 export function validateFileSize(file: File): { valid: boolean; error?: string } {
   const fileExt = file.name.split('.').pop()?.toLowerCase() || '';
-  
+
   const ALLOWED_EXTENSIONS = new Set([
     'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv',
     'png', 'jpg', 'jpeg', 'webp',
@@ -64,12 +64,26 @@ export function toProxyStorageUrl(url: string, origin: string): string {
   return trimmed;
 }
 
+export function healSplitEvidenceTags(html: string): string {
+  if (!html) return html;
+  return html.replace(
+    /<a\s+[^>]*href=["']([^"']*)["'][^>]*>\s*(?:<strong>|<b>)?\s*(?:<u>)?\s*\[\s*(?:<\/u>)?\s*(?:<\/b>|<\/strong>)?\s*<\/a>\s*<a\s+[^>]*href=["']([^"']*)["'][^>]*>\s*(?:<strong>|<b>)?\s*(?:<u>)?\s*(Evidence|Kanıt|edivence)\s*(?:<\/u>)?\s*(?:<\/b>|<\/strong>)?\s*<\/a>\s*<a\s+[^>]*href=["']([^"']*)["'][^>]*>\s*(?:<strong>|<b>)?\s*(?:<u>)?\s*([t\s]*\d+\])\s*(?:<\/u>)?\s*(?:<\/b>|<\/strong>)?\s*<\/a>/gi,
+    (match, u1, u2, word, u3, numPart) => {
+      const cleanNum = numPart.replace(/^[t\s]+/, '').replace(/\]$/, '').trim();
+      const properWord = word.toLowerCase().includes('edivence') ? 'Evidence' : word;
+      return `<a target="_blank" rel="noopener noreferrer" href="${u1}"><strong><u>[${properWord} ${cleanNum}]</u></strong></a>`;
+    }
+  );
+}
+
 /**
- * Replaces href attributes in report HTML so all internal document links point to the proxy URL
+ * Replaces href attributes in report HTML so all internal document links point to the proxy URL,
+ * and heals any fragmented / split evidence link tags created by rich-text copy-pasting.
  */
 export function sanitizeReportHtmlLinks(html: string, origin: string): string {
   if (!html) return html;
-  return html.replace(/href=(["'])(.*?)\1/gi, (match, quote, href) => {
+  const healed = healSplitEvidenceTags(html);
+  return healed.replace(/href=(["'])(.*?)\1/gi, (match, quote, href) => {
     const converted = toProxyStorageUrl(href, origin);
     return `href=${quote}${converted}${quote}`;
   });

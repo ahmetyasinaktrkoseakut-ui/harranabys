@@ -69,10 +69,12 @@ export default function RaporlarClient() {
     checkAuth();
   }, []);
 
-  // Periyot değişiminde state temizleme
-  useEffect(() => {
+  // Periyot değişiminde state temizleme (React render-phase state adjustment)
+  const [prevPeriodId, setPrevPeriodId] = useState<string | undefined>(selectedPeriod?.id);
+  if (selectedPeriod?.id !== prevPeriodId) {
+    setPrevPeriodId(selectedPeriod?.id);
     setRaporData(null);
-  }, [selectedPeriod]);
+  }
 
   const getDuzeyAciklamasi = (olcut: any, puan: number, loc: string) => {
     if (!olcut || !puan) return '';
@@ -247,7 +249,7 @@ export default function RaporlarClient() {
         ilgiliOlcutler.forEach(olcut => {
           const ozdegerlendirme = raporData.ozdegerlendirmeVerileri.find(ov => String(ov.alt_olcut_id) === String(olcut.id));
           const pukoList = getPukoForOlcut(olcut.id);
-          
+
           let combinedText = '';
           const allEvidences: any[] = [];
           let localEvidenceCounter = 1;
@@ -256,19 +258,19 @@ export default function RaporlarClient() {
 
           if (ozdegerlendirme && targetIcerik) {
             combinedText = targetIcerik;
-            
+
             // Agresif temizlik: Başlıkları ve puan metinlerini her türlü tag yapısında temizle
             combinedText = combinedText.replace(/<(h3|p|strong|b)[^>]*>\s*(PLANLAMA|UYGULAMA|KONTROL|ÖNLEM|ONLEM|OLGUNLUK|RAPOR)\s+AŞAMASI\s*<\/(h3|p|strong|b)>/gi, '');
             combinedText = combinedText.replace(/(PLANLAMA|UYGULAMA|KONTROL|ÖNLEM|ONLEM|OLGUNLUK|RAPOR)\s+AŞAMASI/gi, '');
             combinedText = combinedText.replace(/<hr\s*\/?>/gi, '');
             combinedText = combinedText.replace(/Olgunluk Düzeyi Puanı.*?\d\s*\/\s*\d/gi, '');
             combinedText = combinedText.replace(/<p style="color: #718096; font-style: italic; margin-top: 5px; font-size: 13px;">.*?<\/p>/gi, '');
-            
+
             if (isEn) {
               combinedText = combinedText.replace(/\[\s*Kan[ıi]t\s*(\d+)\s*\]/gi, '[Evidence $1]');
               combinedText = combinedText.replace(/>\s*Kan[ıi]t\s*(\d+)\s*</gi, '>Evidence $1<');
             }
-            
+
             (ozdegerlendirme.kanitlar || []).forEach((k: any) => {
               let ev = allEvidences.find(e => e.url === k.url);
               if (!ev) {
@@ -287,16 +289,16 @@ export default function RaporlarClient() {
           const safeCombinedText = sanitizeReportHtmlLinks(combinedText, origin);
 
           htmlContent += `<h3>${olcut.kod} - ${getLocalizedField(olcut, 'olcut_adi', docLang)}</h3>`;
-          
+
           if (safeCombinedText) {
             htmlContent += `<div>${safeCombinedText}</div>`;
           } else {
             htmlContent += `<p style='color: #a0aec0; font-style: italic;'>${isEn ? 'No English report available for this criterion.' : t('no_report_yet')}</p>`;
           }
-          
+
           if (safeCombinedText || olgunlukPuani || uniqueEvidences.length > 0) {
             htmlContent += `<div style='background-color: #fffaf0; padding: 15px; border: 1px solid #feebc8; margin-top: 20px;'>`;
-            
+
             if (olgunlukPuani) {
               const rubricText = getDuzeyAciklamasi(olcut, olgunlukPuani, docLang);
               htmlContent += `<p style='color: #c05621; font-weight: bold; margin: 0;'>${isEn ? 'Maturity Score' : t('maturity_score')}: ${olgunlukPuani} / 5</p>`;
@@ -304,7 +306,7 @@ export default function RaporlarClient() {
                 htmlContent += `<p style='color: #9c4221; font-style: italic; font-size: 13px; margin-top: 5px; margin-bottom: 15px;'>${rubricText}</p>`;
               }
             }
-            
+
             if (uniqueEvidences.length > 0) {
               htmlContent += `<div style='border-top: 1px solid #feebc8; padding-top: 10px; margin-top: 10px;'>`;
               htmlContent += `<p style='color: #c05621; font-size: 12px; font-weight: bold; margin-bottom: 5px;'>${isEn ? 'Attached Evidences' : t('attached_evidences')}</p>`;
@@ -316,7 +318,7 @@ export default function RaporlarClient() {
               htmlContent += evidenceLinks;
               htmlContent += `</div>`;
             }
-            
+
             htmlContent += `</div>`;
           }
         });
@@ -344,7 +346,7 @@ export default function RaporlarClient() {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto animate-in fade-in duration-500">
-      
+
       <div className="mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
@@ -356,13 +358,13 @@ export default function RaporlarClient() {
         <div className="flex flex-wrap items-center gap-3">
           {raporData && !isObserver && (
             <>
-              <button 
+              <button
                 onClick={() => exportToWord(false)}
                 className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-md hover:scale-[1.02] active:scale-[0.98]"
               >
                 <Download className="w-5 h-5" /> {t('export_word')}
               </button>
-              <button 
+              <button
                 onClick={() => exportToWord(true)}
                 className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-md hover:scale-[1.02] active:scale-[0.98]"
               >
@@ -390,7 +392,7 @@ export default function RaporlarClient() {
               <p className="text-slate-500 max-w-lg mb-8 leading-relaxed">
                 {t('report_summary')}
               </p>
-              <button 
+              <button
                 onClick={handleKurumRaporuOlustur}
                 className="group relative inline-flex items-center justify-center gap-3 px-10 py-5 font-bold text-white transition-all duration-300 bg-indigo-600 rounded-full hover:bg-indigo-700 hover:scale-105 hover:shadow-xl focus:outline-none overflow-hidden"
               >
@@ -406,7 +408,7 @@ export default function RaporlarClient() {
       {/* Rapor İçeriği (Önizleme) */}
       {raporData && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-10">
-          
+
           <div className="text-center mb-12 border-b-2 border-slate-800 pb-8">
             <h1 className="text-4xl font-black text-slate-900 mb-4 uppercase">{t('institutional_report')}</h1>
             <p className="text-lg text-slate-600">{t('created_at')}: {new Date().toLocaleDateString(locale === 'tr' ? 'tr-TR' : 'en-US')} {new Date().toLocaleTimeString(locale === 'tr' ? 'tr-TR' : 'en-US')}</p>
@@ -416,7 +418,7 @@ export default function RaporlarClient() {
             {(() => {
               return raporData.anaBasliklar.map((anaBaslik) => {
                 const ilgiliOlcutler = raporData.altOlcutler.filter(o => o.ana_baslik_id === anaBaslik.id);
-                
+
                 if (ilgiliOlcutler.length === 0) return null;
 
                 return (
@@ -429,21 +431,21 @@ export default function RaporlarClient() {
                       {ilgiliOlcutler.map((olcut) => {
                         const ozdegerlendirme = raporData.ozdegerlendirmeVerileri.find(ov => String(ov.alt_olcut_id) === String(olcut.id));
                         const pukoList = getPukoForOlcut(olcut.id);
-                        
+
                         let combinedText = '';
                         const allEvidences: any[] = [];
                         let localEvidenceCounter = 1;
 
                         if (ozdegerlendirme && ozdegerlendirme.icerik) {
                           combinedText = ozdegerlendirme.icerik;
-                          
+
                           // Agresif temizlik: Başlıkları ve puan metinlerini her türlü tag yapısında temizle
                           combinedText = combinedText.replace(/<(h3|p|strong|b)[^>]*>\s*(PLANLAMA|UYGULAMA|KONTROL|ÖNLEM|ONLEM|OLGUNLUK|RAPOR)\s+AŞAMASI\s*<\/(h3|p|strong|b)>/gi, '');
                           combinedText = combinedText.replace(/(PLANLAMA|UYGULAMA|KONTROL|ÖNLEM|ONLEM|OLGUNLUK|RAPOR)\s+AŞAMASI/gi, '');
                           combinedText = combinedText.replace(/<hr\s*\/?>/gi, '');
                           combinedText = combinedText.replace(/Olgunluk Düzeyi Puanı.*?\d\s*\/\s*\d/gi, '');
                           combinedText = combinedText.replace(/<p style="color: #718096; font-style: italic; margin-top: 5px; font-size: 13px;">.*?<\/p>/gi, '');
-                          
+
                           (ozdegerlendirme.kanitlar || []).forEach((k: any) => {
                             let ev = allEvidences.find(e => e.url === k.url);
                             if (!ev) {
@@ -464,16 +466,16 @@ export default function RaporlarClient() {
                               <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded">{olcut.kod}</span>
                               {getLocalizedField(olcut, 'olcut_adi', locale)}
                             </h3>
-                            
+
                             {combinedText ? (
                               <div className="space-y-6">
                                 <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
-                                  <div 
+                                  <div
                                     className="prose prose-sm max-w-none prose-slate"
                                     dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(combinedText) }}
                                   />
                                 </div>
-                                
+
                                 <div className="bg-orange-50 border border-orange-200 p-6 rounded-xl space-y-4">
                                   {olgunlukPuani ? (
                                     <>
@@ -488,17 +490,17 @@ export default function RaporlarClient() {
                                   ) : (
                                     <p className="text-sm text-slate-500 italic">{t('maturity_score_missing')}</p>
                                   )}
-                                  
+
                                   {evidencesWithNumbers.length > 0 && (
                                     <div className="pt-4 border-t border-orange-200/50 flex flex-col gap-3">
                                       <span className="text-xs font-bold text-orange-700 uppercase">{t('attached_evidences')}</span>
                                       <div className="flex flex-col gap-2">
                                         {evidencesWithNumbers.map((k) => (
-                                          <a 
+                                          <a
                                             key={k.url}
-                                            href={k.url} 
-                                            target="_blank" 
-                                            rel="noopener noreferrer" 
+                                            href={toProxyStorageUrl(k.url, typeof window !== 'undefined' ? window.location.origin : '') || k.url}
+                                             target="_blank"
+                                            rel="noopener noreferrer"
                                             className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline transition-colors"
                                           >
                                             {k.no}. {k.name}
@@ -529,11 +531,11 @@ export default function RaporlarClient() {
                                     <span className="text-xs font-bold text-orange-700 uppercase">{t('attached_evidences')}</span>
                                     <div className="flex flex-col gap-2">
                                       {evidencesWithNumbers.map((k) => (
-                                        <a 
+                                        <a
                                           key={k.url}
-                                          href={k.url} 
-                                          target="_blank" 
-                                          rel="noopener noreferrer" 
+                                          href={toProxyStorageUrl(k.url, typeof window !== 'undefined' ? window.location.origin : '') || k.url}
+                                             target="_blank"
+                                          rel="noopener noreferrer"
                                           className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline transition-colors"
                                         >
                                           {k.no}. {k.name}
