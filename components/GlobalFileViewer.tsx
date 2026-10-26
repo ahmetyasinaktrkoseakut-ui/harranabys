@@ -25,9 +25,6 @@ export default function GlobalFileViewer() {
         if (isInternal && !anchor.hasAttribute('download')) {
           anchor.removeAttribute('target');
           anchor.target = '_self';
-        } else if (!isInternal && !anchor.hasAttribute('download')) {
-          anchor.target = '_blank';
-          anchor.rel = 'noopener noreferrer';
         }
       }
     };
@@ -128,9 +125,6 @@ export default function GlobalFileViewer() {
           };
 
           resolveAndOpen();
-        } else if (!isInternal && !isDownload) {
-          anchor.target = '_blank';
-          anchor.rel = 'noopener noreferrer';
         }
       }
     };
