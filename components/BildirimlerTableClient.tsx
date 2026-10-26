@@ -8,6 +8,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { getLocalizedField } from '@/lib/i18n-utils';
 import { validateUploadedFile } from '@/lib/fileValidation';
 import { usePeriod } from '@/contexts/PeriodContext';
+import { degerlendirTekOdr } from '@/lib/pukoStresTesti';
 
 const getAsamaSlug = (asama: string) => {
   if (!asama) return 'kontrol-etme';

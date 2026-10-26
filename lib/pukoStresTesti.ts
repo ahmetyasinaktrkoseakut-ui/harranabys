@@ -488,9 +488,10 @@ export function calistirPukoStresTesti(params: {
           });
 
           // ÖDR HTML içeriğinde gerçek bir kanıt bağlantısı (<a data-evidence-id="..." veya href="...">) var mı?
+          // Kanıtın yalnızca aşağıdaki listede (odr.kanitlar) durması yeterli değildir; metin içinde aktif atıf zorunludur.
           const inOdrHtml = isEvidenceLinkedInHtml(odrIcerik, k);
 
-          if (!inOdrList && !inOdrHtml) {
+          if (!inOdrHtml) {
             asamadaVarOdrdeYok.push({
               alt_olcut_id: olcut.id,
               kod: olcut.kod,
@@ -501,6 +502,39 @@ export function calistirPukoStresTesti(params: {
             });
           }
         });
+      }
+    });
+
+    // ÖDR kanıt listesinde (odr.kanitlar) bulunduğu halde ÖDR metni içinde ([Kanıt N]) atıf almamış kanıtları da denetle
+    odrKanitlar.forEach((ok: any, idx: number) => {
+      if (!ok) return;
+      const rawOkUrl = (ok.url || ok.dosya_url || ok.storagePath || '').trim();
+      const cleanOkName = (ok.name || ok.dosya_adi || '').trim();
+      if (!rawOkUrl && !cleanOkName) return;
+
+      const inOdrHtml = isEvidenceLinkedInHtml(odrIcerik, ok);
+      if (!inOdrHtml) {
+        const okRef = parseStorageReference(rawOkUrl);
+        const okBucket = (ok.bucket || okRef?.bucket || 'dokumanlar').trim();
+        const okEvId = (ok.evidence_id || ok.id || '').trim();
+
+        const alreadyAdded = asamadaVarOdrdeYok.some(item => {
+          if (String(item.alt_olcut_id) !== String(olcut.id)) return false;
+          if (rawOkUrl && item.kanit_url && urlsMatch(rawOkUrl, item.kanit_url, okBucket)) return true;
+          if (cleanOkName && item.kanit_adi === cleanOkName) return true;
+          return false;
+        });
+
+        if (!alreadyAdded) {
+          asamadaVarOdrdeYok.push({
+            alt_olcut_id: olcut.id,
+            kod: olcut.kod,
+            olcut_adi: olcut.olcut_adi,
+            puko_asamasi: ok.puko_asamasi || 'odr',
+            kanit_adi: cleanOkName || rawOkUrl.split('/').pop() || `Kanıt ${ok.no || ok.evidence_no || idx + 1}`,
+            kanit_url: rawOkUrl,
+          });
+        }
       }
     });
 
@@ -814,7 +848,8 @@ export function denetleIngilizceOdr(params: {
 }
 
 /**
- * Tekil ÖDR kaydı kaydedildiğinde bilgilendirici kontrol yapar (kaydı engellemez).
+ * Tekil ÖDR kaydı kaydedildiğinde veya onaylanırken hem Türkçe metindeki kanıt atıflarını
+ * hem de İngilizce ÖDR bütünlüğünü denetler.
  */
 export function degerlendirTekOdr(params: {
   altOlcutId: number | string;
@@ -828,10 +863,77 @@ export function degerlendirTekOdr(params: {
   hasIssue: boolean;
   warningMessage: string | null;
   issues: IngilizceOdrSorunu[];
+  uncitedTrEvidences: Array<{ kanit_no?: number | string; dosya_adi: string; asama: string }>;
 } {
+  const htmlTr = params.icerikTr || '';
+  const odrKanitlar = Array.isArray(params.kanitlar) ? params.kanitlar : [];
+  const pukoStages = Array.isArray(params.pukoStages) ? params.pukoStages : [];
+
+  const uncitedTrEvidences: Array<{ kanit_no?: number | string; dosya_adi: string; asama: string; url?: string }> = [];
+
+  // 1. ÖDR kanıtlar listesindeki (odr.kanitlar) kanıtların Türkçe metinde atıf alıp almadığını kontrol et
+  odrKanitlar.forEach((ok: any, idx: number) => {
+    if (!ok) return;
+    const okUrl = (ok.url || ok.dosya_url || ok.storagePath || '').trim();
+    const okName = (ok.name || ok.dosya_adi || '').trim();
+    if (!okUrl && !okName) return;
+
+    const no = ok.no ?? ok.evidence_no ?? (idx + 1);
+    if (!isEvidenceLinkedInHtml(htmlTr, ok)) {
+      uncitedTrEvidences.push({
+        kanit_no: no,
+        dosya_adi: okName || okUrl.split('/').pop() || `Kanıt ${no}`,
+        asama: ok.puko_asamasi || 'ÖDR Listesi',
+        url: okUrl,
+      });
+    }
+  });
+
+  // 2. PUKÖ aşamalarındaki kanıtların Türkçe ÖDR metninde atıf alıp almadığını kontrol et
+  pukoStages.forEach(p => {
+    if (Array.isArray(p.kanit_dosyalari)) {
+      p.kanit_dosyalari.forEach((k, idx) => {
+        if (!k) return;
+        const kUrl = (k.url || k.dosya_url || k.storagePath || '').trim();
+        const kName = (k.name || k.dosya_adi || '').trim();
+        if (!kUrl && !kName) return;
+
+        if (!isEvidenceLinkedInHtml(htmlTr, k)) {
+          const kRef = parseStorageReference(kUrl);
+          const kBucket = (k.bucket || kRef?.bucket || 'dokumanlar').trim();
+          const alreadyListed = uncitedTrEvidences.some(u =>
+            (kUrl && u.url && urlsMatch(kUrl, u.url, kBucket)) ||
+            (kName && u.dosya_adi === kName)
+          );
+          if (!alreadyListed) {
+            uncitedTrEvidences.push({
+              kanit_no: k.no ?? k.evidence_no ?? (idx + 1),
+              dosya_adi: kName || kUrl.split('/').pop() || 'Kanıt Dosyası',
+              asama: p.puko_asamasi || 'PUKÖ',
+              url: kUrl,
+            });
+          }
+        }
+      });
+    }
+  });
+
   const issues = denetleIngilizceOdr(params);
-  if (issues.length === 0) {
-    return { hasIssue: false, warningMessage: null, issues: [] };
+
+  if (uncitedTrEvidences.length === 0 && issues.length === 0) {
+    return { hasIssue: false, warningMessage: null, issues: [], uncitedTrEvidences: [] };
+  }
+
+  if (uncitedTrEvidences.length > 0) {
+    const trLabels = uncitedTrEvidences
+      .map(u => (u.kanit_no ? `[Kanıt ${u.kanit_no}] ${u.dosya_adi}` : u.dosya_adi))
+      .join(', ');
+    return {
+      hasIssue: true,
+      warningMessage: `Stres Testi Uyarısı: Aşamalarda veya kanıt listesinde yer alan (${trLabels}) ÖDR metni içerisinde henüz atıf almamıştır.`,
+      issues,
+      uncitedTrEvidences,
+    };
   }
 
   const primaryIssue = issues[0];
@@ -847,5 +949,6 @@ export function degerlendirTekOdr(params: {
     hasIssue: true,
     warningMessage,
     issues,
+    uncitedTrEvidences,
   };
 }
