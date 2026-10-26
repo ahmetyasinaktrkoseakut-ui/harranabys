@@ -95,6 +95,36 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
     try {
       const activePeriodId = row.donem_id || selectedPeriod?.id;
 
+      // 0. Onay öncesi ÖDR kanıt-metin bütünlüğü kontrolü
+      const [{ data: odrRec }, { data: stageRows }] = await Promise.all([
+        supabase
+          .from('ozdegerlendirme_raporlari')
+          .select('icerik, icerik_en, kanitlar')
+          .eq('alt_olcut_id', String(row.alt_olcut_id))
+          .eq('donem_id', activePeriodId)
+          .maybeSingle(),
+        supabase
+          .from('puko_degerlendirmeleri')
+          .select('alt_olcut_id, puko_asamasi, aciklama, kanit_dosyalari, durum, donem_id')
+          .eq('alt_olcut_id', row.alt_olcut_id)
+          .eq('donem_id', activePeriodId),
+      ]);
+
+      const stressCheck = degerlendirTekOdr({
+        altOlcutId: row.alt_olcut_id,
+        kod: row.alt_olcutler?.kod || '',
+        olcutAdi: row.alt_olcutler?.olcut_adi || '',
+        icerikTr: odrRec?.icerik,
+        icerikEn: odrRec?.icerik_en,
+        kanitlar: odrRec?.kanitlar,
+        pukoStages: stageRows || [],
+      });
+
+      if (stressCheck.uncitedTrEvidences && stressCheck.uncitedTrEvidences.length > 0) {
+        alert(`${stressCheck.warningMessage}\n\nLütfen ilgili ölçütün ÖDR sayfasında eksik kanıt atıflarını metne ekleyip kaydettikten sonra onaylayınız.`);
+        return;
+      }
+
       // 1. PUKÖ tablosundaki o alt ölçüte ve döneme ait TÜM kayıtları 'Onaylandı' yap
       let pukoQuery = supabase
         .from('puko_degerlendirmeleri')

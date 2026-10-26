@@ -592,11 +592,20 @@ export function denetleIngilizceOdr(params: {
       return issues;
     }
 
+    const stripTagsAndEv = (str: string | null | undefined) =>
+      normalizeHtmlForComparison(str)
+        .replace(/\[\s*kan[ıi]t\s*\d+\s*\]/gi, '')
+        .replace(/\[\s*evidence\s*\d+\s*\]/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
     const normTr = normalizeHtmlForComparison(icerikTr);
     const normEn = normalizeHtmlForComparison(icerikEn);
+    const trStripped = stripTagsAndEv(icerikTr);
+    const enStripped = stripTagsAndEv(icerikEn);
 
-    // Durum A: Düzenlenmiş Türkçe ÖDR metni ile birebir aynıysa
-    if (normTr.length > 0 && normTr === normEn) {
+    // Durum A: Düzenlenmiş Türkçe ÖDR metni ile ([Kanıt N] atıfları olsa da olmasa da) birebir aynıysa
+    if ((normTr.length > 0 && normTr === normEn) || (trStripped.length > 0 && trStripped === enStripped)) {
       issues.push({
         alt_olcut_id: altOlcutId,
         kod,
@@ -620,15 +629,7 @@ export function denetleIngilizceOdr(params: {
         }
       });
 
-      const stripTagsAndEv = (str: string) =>
-        normalizeHtmlForComparison(str)
-          .replace(/\[\s*kan[ıi]t\s*\d+\s*\]/gi, '')
-          .replace(/\[\s*evidence\s*\d+\s*\]/gi, '')
-          .replace(/\s+/g, ' ')
-          .trim();
-
       const pukoStripped = stripTagsAndEv(rawPukoCombined);
-      const enStripped = stripTagsAndEv(icerikEn || '');
 
       if (pukoStripped.length > 0 && enStripped === pukoStripped) {
         issues.push({
@@ -870,30 +871,30 @@ export function degerlendirTekOdr(params: {
     return { hasIssue: false, warningMessage: null, issues: [], uncitedTrEvidences: [] };
   }
 
+  const warnings: string[] = [];
+
   if (uncitedTrEvidences.length > 0) {
     const trLabels = uncitedTrEvidences
       .map(u => (u.kanit_no ? `[Kanıt ${u.kanit_no}] ${u.dosya_adi}` : u.dosya_adi))
       .join(', ');
-    return {
-      hasIssue: true,
-      warningMessage: `Stres Testi Uyarısı: Aşamalarda veya kanıt listesinde yer alan (${trLabels}) ÖDR metni içerisinde henüz atıf almamıştır.`,
-      issues,
-      uncitedTrEvidences,
-    };
+    warnings.push(`Stres Testi Uyarısı: Aşamalarda yer alan (${trLabels}) ÖDR metni içerisinde henüz atıf almamıştır.`);
   }
 
-  const primaryIssue = issues[0];
-  let warningMessage = primaryIssue.aciklama;
-  if (primaryIssue.sorun_tipi === 'bos_veya_kopyalanmis') {
-    warningMessage = 'Stres Testi Bilgilendirmesi: İngilizce ÖDR içeriği henüz girilmemiş veya Türkçe metinle aynı bırakılmış.';
-  } else if (primaryIssue.sorun_tipi === 'kanit_baglantisi_eksik') {
-    const labels = primaryIssue.eksik_kanitlar?.join(', ') || '';
-    warningMessage = `Stres Testi Bilgilendirmesi: İngilizce ÖDR metninde ${labels} için geçerli kanıt bağlantısı bulunamadı veya yanlış numaraya bağlanmış.`;
+  if (issues.length > 0) {
+    const primaryIssue = issues[0];
+    if (primaryIssue.sorun_tipi === 'bos_veya_kopyalanmis') {
+      warnings.push('Stres Testi Bilgilendirmesi: İngilizce ÖDR içeriği henüz girilmemiş veya Türkçe metinle aynı bırakılmış.');
+    } else if (primaryIssue.sorun_tipi === 'kanit_baglantisi_eksik') {
+      const labels = primaryIssue.eksik_kanitlar?.join(', ') || '';
+      warnings.push(`Stres Testi Bilgilendirmesi: İngilizce ÖDR metninde ${labels} için geçerli kanıt bağlantısı bulunamadı veya yanlış numaraya bağlanmış.`);
+    } else {
+      warnings.push(primaryIssue.aciklama);
+    }
   }
 
   return {
     hasIssue: true,
-    warningMessage,
+    warningMessage: warnings.join(' | '),
     issues,
     uncitedTrEvidences,
   };

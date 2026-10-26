@@ -459,8 +459,14 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
 
       alert(t('save_success'));
 
-      // İngilizce ÖDR Stres Testi Değerlendirmesi (Kayıt başarılı olduktan sonra bilgilendirici uyarı)
+      // Akreditasyon ve İngilizce ÖDR Stres Testi Değerlendirmesi (Kayıt başarılı olduktan sonra bilgilendirici uyarı)
       try {
+        const { data: stageRows } = await supabase
+          .from('puko_degerlendirmeleri')
+          .select('alt_olcut_id, puko_asamasi, aciklama, kanit_dosyalari, durum, donem_id')
+          .eq('alt_olcut_id', String(resolvedParams.id))
+          .eq('donem_id', String(selectedPeriod.id));
+
         const stressCheck = degerlendirTekOdr({
           altOlcutId: resolvedParams.id,
           kod: olcutDetay?.kod || '',
@@ -468,6 +474,7 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
           icerikTr: raporMetni,
           icerikEn: raporMetniEn,
           kanitlar: kanitlar,
+          pukoStages: stageRows || [],
         });
 
         if (stressCheck.hasIssue && stressCheck.warningMessage) {
@@ -490,13 +497,44 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
   const handleApprove = async () => {
     setIsActionSubmitting(true);
     try {
-      // ozdegerlendirme_raporlari tablosunu güncelle
-      const { data: currentRecord } = await supabase
-        .from('ozdegerlendirme_raporlari')
-        .select('*')
-        .eq('alt_olcut_id', String(resolvedParams.id))
-        .eq('donem_id', selectedPeriod?.id)
-        .maybeSingle();
+      // ozdegerlendirme_raporlari tablosunu ve PUKÖ aşama kanıtlarını kontrol et
+      const [{ data: currentRecord }, { data: stageRows }] = await Promise.all([
+        supabase
+          .from('ozdegerlendirme_raporlari')
+          .select('*')
+          .eq('alt_olcut_id', String(resolvedParams.id))
+          .eq('donem_id', selectedPeriod?.id)
+          .maybeSingle(),
+        supabase
+          .from('puko_degerlendirmeleri')
+          .select('alt_olcut_id, puko_asamasi, aciklama, kanit_dosyalari, durum, donem_id')
+          .eq('alt_olcut_id', String(resolvedParams.id))
+          .eq('donem_id', selectedPeriod?.id),
+      ]);
+
+      const stressCheck = degerlendirTekOdr({
+        altOlcutId: resolvedParams.id,
+        kod: olcutDetay?.kod || '',
+        olcutAdi: olcutDetay?.olcut_adi || '',
+        icerikTr: currentRecord?.icerik ?? raporMetni,
+        icerikEn: currentRecord?.icerik_en ?? raporMetniEn,
+        kanitlar: currentRecord?.kanitlar ?? kanitlar,
+        pukoStages: stageRows || [],
+      });
+
+      if (stressCheck.uncitedTrEvidences && stressCheck.uncitedTrEvidences.length > 0) {
+        if (stressCheck.warningMessage) {
+          setOdrStressWarning(stressCheck.warningMessage);
+        }
+        alert(`${stressCheck.warningMessage}\n\nLütfen eksik kanıt atıflarını ÖDR metnine ekleyip kaydettikten sonra onaylayınız.`);
+        return;
+      }
+
+      if (stressCheck.hasIssue && stressCheck.warningMessage) {
+        setOdrStressWarning(stressCheck.warningMessage);
+      } else {
+        setOdrStressWarning(null);
+      }
 
       if (currentRecord) {
         const { error } = await supabase
@@ -593,7 +631,8 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
     const label = target === 'en' ? `[Evidence ${index + 1}]` : `[Kanıt ${index + 1}]`;
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const safeUrl = toProxyStorageUrl(doc.url, origin);
-    const anchorHTML = `&nbsp;<a href="${safeUrl}" rel="noopener noreferrer" style="color: #2563eb; font-weight: bold; text-decoration: underline; cursor: pointer;">${label}</a>&nbsp;`;
+    const evIdAttr = doc.evidence_id ? ` data-evidence-id="${doc.evidence_id}"` : '';
+    const anchorHTML = `&nbsp;<a${evIdAttr} href="${safeUrl}" rel="noopener noreferrer" style="color: #2563eb; font-weight: bold; text-decoration: underline; cursor: pointer;">${label}</a>&nbsp;`;
     
     if (target === 'tr') {
       if (editorRef.current) {
@@ -774,7 +813,7 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
             <div>
               <p className="text-xs font-bold text-amber-900">{odrStressWarning}</p>
               <p className="text-[11px] text-amber-700 mt-0.5">
-                Raporunuz başarıyla kaydedildi; ancak akreditasyon stres testini kusursuz geçmek için İngilizce metni ve ilgili [Evidence N] bağlantılarını kontrol edebilirsiniz.
+                Akreditasyon stres testini kusursuz geçmek için ÖDR metnindeki tüm [Kanıt N] ve İngilizce [Evidence N] bağlantılarını kontrol ediniz.
               </p>
             </div>
           </div>
