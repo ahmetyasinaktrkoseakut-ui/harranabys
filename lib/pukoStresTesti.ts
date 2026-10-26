@@ -441,8 +441,15 @@ export function calistirPukoStresTesti(params: {
     }
 
     // 2. Aşamalarda Kanıt Var, ÖDR'de Yok Kontrolü
-    const odrKanitlar = Array.isArray(odr?.kanitlar) ? odr.kanitlar : [];
     const odrIcerik = odr?.icerik || '';
+    const allStageEvidences: KanitDosyasi[] = [];
+    pukoStages.forEach(p => {
+      if (p.kanit_dosyalari && Array.isArray(p.kanit_dosyalari)) {
+        p.kanit_dosyalari.forEach(k => {
+          if (k) allStageEvidences.push(k);
+        });
+      }
+    });
 
     pukoStages.forEach(p => {
       if (p.kanit_dosyalari && Array.isArray(p.kanit_dosyalari)) {
@@ -451,45 +458,18 @@ export function calistirPukoStresTesti(params: {
           const cleanName = (k.name || k.dosya_adi || '').trim();
           if (!rawUrl && !cleanName) return;
 
-          const kRef = parseStorageReference(k.url || k.dosya_url);
-          const kBucket = (k.bucket || kRef?.bucket || 'dokumanlar').trim();
-
-          // ÖDR kanıt listesinde (odr.kanitlar) var mı? (Yalnızca evidence_id veya tam URL eşleşmesi)
-          const kEvId = (k.evidence_id || k.id || '').trim();
-          const inOdrList = odrKanitlar.some((ok: any) => {
-            const okUrl = (ok.url || ok.dosya_url || ok.storagePath || '').trim();
-            const okEvId = (ok.evidence_id || ok.id || '').trim();
-
-            // 1. Eğer hem PUKÖ kanıtında hem de ÖDR kanıtında URL varsa:
-            if (rawUrl && okUrl) {
-              const urlMatches = urlsMatch(rawUrl, okUrl, kBucket);
-              // URL veya bucket uyuşmuyorsa, evidence_id aynı olsa dahi YANLIŞ / FARKLI dosyadır -> REDDET!
-              if (!urlMatches) {
-                return false;
-              }
-              // URL eşleşti; eğer ikisinde de ID varsa ve ID'ler çelişiyorsa -> REDDET!
-              if (kEvId && okEvId && kEvId !== okEvId) {
-                return false;
-              }
-              return true;
-            }
-
-            // 2. URL'lerden biri yoksa (yalnızca ID üzerinden aktarılmış kayıtlar):
-            if (kEvId && okEvId && kEvId === okEvId) {
-              return true;
-            }
-
-            // 3. ID yoksa ama URL varsa:
-            if (rawUrl && okUrl && urlsMatch(rawUrl, okUrl, kBucket)) {
-              return true;
-            }
-
-            return false;
-          });
-
           // ÖDR HTML içeriğinde gerçek bir kanıt bağlantısı (<a data-evidence-id="..." veya href="...">) var mı?
           // Kanıtın yalnızca aşağıdaki listede (odr.kanitlar) durması yeterli değildir; metin içinde aktif atıf zorunludur.
-          const inOdrHtml = isEvidenceLinkedInHtml(odrIcerik, k);
+          // Ayrıca aynı dosya adı bu ölçütün başka bir PUKÖ aşamasına da yüklenmiş ve o kopyaya metinde atıf verilmişse mükerrer hata üretilmez.
+          const inOdrHtml =
+            isEvidenceLinkedInHtml(odrIcerik, k) ||
+            (Boolean(cleanName) &&
+              allStageEvidences.some(
+                otherK =>
+                  otherK !== k &&
+                  (otherK.name || otherK.dosya_adi || '').trim() === cleanName &&
+                  isEvidenceLinkedInHtml(odrIcerik, otherK)
+              ));
 
           if (!inOdrHtml) {
             asamadaVarOdrdeYok.push({
@@ -502,39 +482,6 @@ export function calistirPukoStresTesti(params: {
             });
           }
         });
-      }
-    });
-
-    // ÖDR kanıt listesinde (odr.kanitlar) bulunduğu halde ÖDR metni içinde ([Kanıt N]) atıf almamış kanıtları da denetle
-    odrKanitlar.forEach((ok: any, idx: number) => {
-      if (!ok) return;
-      const rawOkUrl = (ok.url || ok.dosya_url || ok.storagePath || '').trim();
-      const cleanOkName = (ok.name || ok.dosya_adi || '').trim();
-      if (!rawOkUrl && !cleanOkName) return;
-
-      const inOdrHtml = isEvidenceLinkedInHtml(odrIcerik, ok);
-      if (!inOdrHtml) {
-        const okRef = parseStorageReference(rawOkUrl);
-        const okBucket = (ok.bucket || okRef?.bucket || 'dokumanlar').trim();
-        const okEvId = (ok.evidence_id || ok.id || '').trim();
-
-        const alreadyAdded = asamadaVarOdrdeYok.some(item => {
-          if (String(item.alt_olcut_id) !== String(olcut.id)) return false;
-          if (rawOkUrl && item.kanit_url && urlsMatch(rawOkUrl, item.kanit_url, okBucket)) return true;
-          if (cleanOkName && item.kanit_adi === cleanOkName) return true;
-          return false;
-        });
-
-        if (!alreadyAdded) {
-          asamadaVarOdrdeYok.push({
-            alt_olcut_id: olcut.id,
-            kod: olcut.kod,
-            olcut_adi: olcut.olcut_adi,
-            puko_asamasi: ok.puko_asamasi || 'odr',
-            kanit_adi: cleanOkName || rawOkUrl.split('/').pop() || `Kanıt ${ok.no || ok.evidence_no || idx + 1}`,
-            kanit_url: rawOkUrl,
-          });
-        }
       }
     });
 
@@ -866,30 +813,19 @@ export function degerlendirTekOdr(params: {
   uncitedTrEvidences: Array<{ kanit_no?: number | string; dosya_adi: string; asama: string }>;
 } {
   const htmlTr = params.icerikTr || '';
-  const odrKanitlar = Array.isArray(params.kanitlar) ? params.kanitlar : [];
   const pukoStages = Array.isArray(params.pukoStages) ? params.pukoStages : [];
-
-  const uncitedTrEvidences: Array<{ kanit_no?: number | string; dosya_adi: string; asama: string; url?: string }> = [];
-
-  // 1. ÖDR kanıtlar listesindeki (odr.kanitlar) kanıtların Türkçe metinde atıf alıp almadığını kontrol et
-  odrKanitlar.forEach((ok: any, idx: number) => {
-    if (!ok) return;
-    const okUrl = (ok.url || ok.dosya_url || ok.storagePath || '').trim();
-    const okName = (ok.name || ok.dosya_adi || '').trim();
-    if (!okUrl && !okName) return;
-
-    const no = ok.no ?? ok.evidence_no ?? (idx + 1);
-    if (!isEvidenceLinkedInHtml(htmlTr, ok)) {
-      uncitedTrEvidences.push({
-        kanit_no: no,
-        dosya_adi: okName || okUrl.split('/').pop() || `Kanıt ${no}`,
-        asama: ok.puko_asamasi || 'ÖDR Listesi',
-        url: okUrl,
+  const allStageEvidences: KanitDosyasi[] = [];
+  pukoStages.forEach(p => {
+    if (Array.isArray(p.kanit_dosyalari)) {
+      p.kanit_dosyalari.forEach(k => {
+        if (k) allStageEvidences.push(k);
       });
     }
   });
 
-  // 2. PUKÖ aşamalarındaki kanıtların Türkçe ÖDR metninde atıf alıp almadığını kontrol et
+  const uncitedTrEvidences: Array<{ kanit_no?: number | string; dosya_adi: string; asama: string; url?: string }> = [];
+
+  // PUKÖ aşamalarındaki kanıtların Türkçe ÖDR metninde aktif bağlantı olarak atıf alıp almadığını kontrol et
   pukoStages.forEach(p => {
     if (Array.isArray(p.kanit_dosyalari)) {
       p.kanit_dosyalari.forEach((k, idx) => {
@@ -898,7 +834,17 @@ export function degerlendirTekOdr(params: {
         const kName = (k.name || k.dosya_adi || '').trim();
         if (!kUrl && !kName) return;
 
-        if (!isEvidenceLinkedInHtml(htmlTr, k)) {
+        const inOdrHtml =
+          isEvidenceLinkedInHtml(htmlTr, k) ||
+          (Boolean(kName) &&
+            allStageEvidences.some(
+              otherK =>
+                otherK !== k &&
+                (otherK.name || otherK.dosya_adi || '').trim() === kName &&
+                isEvidenceLinkedInHtml(htmlTr, otherK)
+            ));
+
+        if (!inOdrHtml) {
           const kRef = parseStorageReference(kUrl);
           const kBucket = (k.bucket || kRef?.bucket || 'dokumanlar').trim();
           const alreadyListed = uncitedTrEvidences.some(u =>
