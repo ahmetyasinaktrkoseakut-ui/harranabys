@@ -402,21 +402,16 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
         red_nedeni: null,
       };
 
-      const { data: existingRecord } = await supabase
-        .from('ozdegerlendirme_raporlari')
-        .select('id')
-        .eq('alt_olcut_id', String(resolvedParams.id))
-        .eq('donem_id', String(selectedPeriod.id))
-        .order('olusturulma_tarihi', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      // Sunucu taraflı güvenli kayıt API'sini çağır (RLS ve yeni kayıt kısıtlarını güvenli şekilde aşar)
+      const saveRes = await fetch('/api/rapor/kaydet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(upsertData),
+      });
 
-      if (existingRecord?.id) {
-        const { error: err } = await supabase.from('ozdegerlendirme_raporlari').update(upsertData).eq('id', existingRecord.id);
-        if (err) throw err;
-      } else {
-        const { error: err } = await supabase.from('ozdegerlendirme_raporlari').insert(upsertData);
-        if (err) throw err;
+      if (!saveRes.ok) {
+        const saveJson = await saveRes.json().catch(() => ({}));
+        throw new Error(saveJson.error || 'Rapor kaydedilemedi.');
       }
 
       // Rapor her kaydedildiğinde durumu 'bekliyor'a çek (Onaylanmış olsa bile tekrar onaya düşer)
