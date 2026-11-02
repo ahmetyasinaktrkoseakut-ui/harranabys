@@ -113,7 +113,6 @@ export async function POST(request: Request) {
       kanitlar: Array.isArray(kanitlar) ? kanitlar : [],
       onay_durumu: 'bekliyor',
       red_nedeni: null,
-      kullanici_id: user.id
     };
 
     // 4. Var olan kaydı kontrol et
