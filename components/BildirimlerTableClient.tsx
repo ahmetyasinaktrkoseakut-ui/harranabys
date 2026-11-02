@@ -96,7 +96,10 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
       const activePeriodId = row.donem_id || selectedPeriod?.id;
 
       // 0. Onay öncesi ÖDR kanıt-metin bütünlüğü kontrolü
-      const [{ data: odrRec }, { data: stageRows }] = await Promise.all([
+      const [
+        { data: odrRec, error: odrReadError },
+        { data: stageRows, error: stageReadError },
+      ] = await Promise.all([
         supabase
           .from('ozdegerlendirme_raporlari')
           .select('icerik, icerik_en, kanitlar')
@@ -109,6 +112,9 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
           .eq('alt_olcut_id', row.alt_olcut_id)
           .eq('donem_id', activePeriodId),
       ]);
+
+      if (odrReadError) throw odrReadError;
+      if (stageReadError) throw stageReadError;
 
       const stressCheck = degerlendirTekOdr({
         altOlcutId: row.alt_olcut_id,
@@ -138,18 +144,15 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
       if (pukoError) throw pukoError;
 
       // 2. Özdeğerlendirme raporu tablosundaki onay durumunu da 'onaylandi' yap
-      try {
-        let ozdQuery = supabase
-          .from('ozdegerlendirme_raporlari')
-          .update({ onay_durumu: 'onaylandi', red_nedeni: null })
-          .eq('alt_olcut_id', String(row.alt_olcut_id));
-        if (activePeriodId) {
-          ozdQuery = ozdQuery.eq('donem_id', activePeriodId);
-        }
-        await ozdQuery;
-      } catch (e) {
-        console.warn("Özdeğerlendirme raporu onay senkronizasyonu:", e);
+      let ozdQuery = supabase
+        .from('ozdegerlendirme_raporlari')
+        .update({ onay_durumu: 'onaylandi', red_nedeni: null })
+        .eq('alt_olcut_id', String(row.alt_olcut_id));
+      if (activePeriodId) {
+        ozdQuery = ozdQuery.eq('donem_id', activePeriodId);
       }
+      const { error: ozdError } = await ozdQuery;
+      if (ozdError) throw ozdError;
 
       // 3. Bildirim tablosuna onay bildirimi ekle
       try {

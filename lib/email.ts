@@ -66,10 +66,28 @@ function getGmailTransporter() {
   });
 }
 
+const AUTOMATIC_FOOTER_HTML = `
+  <div style="margin-top: 24px; padding-top: 12px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 11px; color: #64748b; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    Bu mail sistem üzerinden yönetici talebi üzerine otomatik oluşturulmuştur.
+  </div>
+`;
+
+export function ensureAutomaticFooter(html: string): string {
+  if (!html) return html;
+  if (html.includes('Bu mail sistem üzerinden yönetici talebi üzerine otomatik oluşturulmuştur')) {
+    return html;
+  }
+  if (html.includes('</body>')) {
+    return html.replace('</body>', `${AUTOMATIC_FOOTER_HTML}</body>`);
+  }
+  return `${html}${AUTOMATIC_FOOTER_HTML}`;
+}
+
 /**
  * Tekil E-Posta Gönderici (Özdeğerlendirme Raporu Ret/Revizyon Bildirimi)
  */
 export async function sendSingleEmail({ to, subject, html }: SendSingleEmailParams): Promise<SendEmailResult> {
+  const finalHtml = ensureAutomaticFooter(html);
   const { gmailUser, apiKey, from } = getEmailConfig();
   const transporter = getGmailTransporter();
 
@@ -84,7 +102,7 @@ export async function sendSingleEmail({ to, subject, html }: SendSingleEmailPara
         from,
         to: to.trim(),
         subject: subject.trim(),
-        html,
+        html: finalHtml,
       });
       return { success: true, id: info.messageId };
     } catch (err: any) {
@@ -111,7 +129,7 @@ export async function sendSingleEmail({ to, subject, html }: SendSingleEmailPara
           from,
           to: [to.trim()],
           subject: subject.trim(),
-          html,
+          html: finalHtml,
         }),
         signal: controller.signal,
       });
@@ -165,7 +183,7 @@ export async function sendBatchEmails(items: BatchEmailItem[]): Promise<{ succes
           from,
           to: item.to.trim(),
           subject: item.subject.trim(),
-          html: item.html,
+          html: ensureAutomaticFooter(item.html),
         });
         totalSent++;
       } catch (err: any) {
@@ -185,7 +203,7 @@ export async function sendBatchEmails(items: BatchEmailItem[]): Promise<{ succes
         from,
         to: [item.to.trim()],
         subject: item.subject.trim(),
-        html: item.html,
+        html: ensureAutomaticFooter(item.html),
       }));
 
       const controller = new AbortController();

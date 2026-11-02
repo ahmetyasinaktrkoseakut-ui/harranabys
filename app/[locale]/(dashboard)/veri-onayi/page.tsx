@@ -20,6 +20,7 @@ import { useParams } from 'next/navigation';
 import { getAssignedLetter } from '@/lib/utils';
 import DOMPurify from 'dompurify';
 import { logAction } from '@/lib/logger';
+import { degerlendirTekOdr } from '@/lib/pukoStresTesti';
 
 export default function VeriOnayiPage() {
   const { selectedPeriod } = usePeriod();
@@ -144,8 +145,33 @@ export default function VeriOnayiPage() {
     try {
       setIsSubmitting(true);
       
-      // 1. Raporu al (alt_olcut_id, donem_id ve olusturan kisiye ulaşmak için)
-      const { data: report } = await supabase.from('ozdegerlendirme_raporlari').select('*').eq('id', id).maybeSingle();
+      // 1. Raporu al (alt_olcut_id, donem_id ve kanıt kontrolü için)
+      const { data: report, error: reportFetchError } = await supabase.from('ozdegerlendirme_raporlari').select('*').eq('id', id).maybeSingle();
+      if (reportFetchError) throw reportFetchError;
+      if (!report) throw new Error('Onaylanacak rapor bulunamadı.');
+
+      const { data: stageRows, error: stageFetchError } = await supabase
+        .from('puko_degerlendirmeleri')
+        .select('alt_olcut_id, puko_asamasi, aciklama, kanit_dosyalari, durum, donem_id')
+        .eq('alt_olcut_id', report.alt_olcut_id)
+        .eq('donem_id', report.donem_id);
+      if (stageFetchError) throw stageFetchError;
+
+      const matchedReport = reports.find((r: any) => String(r.id) === String(id));
+      const stressCheck = degerlendirTekOdr({
+        altOlcutId: report.alt_olcut_id,
+        kod: matchedReport?.alt_olcutler?.kod || '',
+        olcutAdi: matchedReport?.alt_olcutler?.ad || '',
+        icerikTr: report.icerik,
+        icerikEn: report.icerik_en,
+        kanitlar: report.kanitlar,
+        pukoStages: stageRows || [],
+      });
+
+      if (stressCheck.uncitedTrEvidences && stressCheck.uncitedTrEvidences.length > 0) {
+        alert(`${stressCheck.warningMessage}\n\nLütfen ilgili ölçütün ÖDR sayfasında eksik kanıt atıflarını metne ekleyip kaydettikten sonra onaylayınız.`);
+        return;
+      }
 
       // 2. Raporu onayla
       const { error: reportError } = await supabase
@@ -178,11 +204,12 @@ export default function VeriOnayiPage() {
 
       // 3. PUKÖ Tablosundaki ilgili tüm bildirimleri 'Onaylandı' yap (Yönetici panelinde de böyle gözükecek)
       if (report) {
-        await supabase
+        const { error: pukoError } = await supabase
           .from('puko_degerlendirmeleri')
           .update({ durum: 'Onaylandı', red_nedeni: null })
           .eq('alt_olcut_id', report.alt_olcut_id)
           .eq('donem_id', report.donem_id);
+        if (pukoError) throw pukoError;
 
         await logAction({
           supabase,

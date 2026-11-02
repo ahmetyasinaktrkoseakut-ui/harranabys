@@ -472,28 +472,21 @@ export default function KontrolEtmeClient({ params }: KontrolEtmeClientProps) {
 
       // 3. Özdeğerlendirme Raporu Kaydı (Birim Değerlendirmesi)
       if (birimDegerlendirmesi || yoneticiAnalizi) {
-        const upsertRapor: Record<string, any> = {
-          alt_olcut_id: resolvedParams.id,
-          donem_id: selectedPeriod?.id,
-          birim_anket_degerlendirmesi: birimDegerlendirmesi
-        };
-
-        if (ozdegerlendirmeRaporuId) {
-          const { error } = await supabase.from('ozdegerlendirme_raporlari')
-            .update(upsertRapor)
-            .eq('id', ozdegerlendirmeRaporuId);
-          if (error) throw new Error(error.message);
-        } else {
-          // Eğer rapor yoksa içeriği ve kanıtları boş olacak şekilde oluştur
-          upsertRapor.icerik = '';
-          upsertRapor.kanitlar = [];
-          upsertRapor.onay_durumu = 'bekliyor';
-          const { data: newRapor, error } = await supabase.from('ozdegerlendirme_raporlari')
-            .insert(upsertRapor)
-            .select('id')
-            .maybeSingle();
-          if (error) throw new Error(error.message);
-          if (newRapor) setOzdegerlendirmeRaporuId(newRapor.id.toString());
+        const saveRes = await fetch('/api/rapor/kaydet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            alt_olcut_id: String(resolvedParams.id),
+            donem_id: String(selectedPeriod?.id),
+            birim_anket_degerlendirmesi: birimDegerlendirmesi,
+          }),
+        });
+        const saveJson = await saveRes.json().catch(() => ({}));
+        if (!saveRes.ok) {
+          throw new Error(saveJson.error || 'Birim anket değerlendirmesi kaydedilemedi.');
+        }
+        if (saveJson.data?.id) {
+          setOzdegerlendirmeRaporuId(saveJson.data.id.toString());
         }
       }
 

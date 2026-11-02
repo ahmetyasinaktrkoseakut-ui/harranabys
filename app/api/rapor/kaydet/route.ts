@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
+import { logAction } from '@/lib/logger';
 
 export async function POST(request: Request) {
   try {
@@ -34,7 +35,15 @@ export async function POST(request: Request) {
 
     // 2. Girdi Doğrulaması
     const body = await request.json().catch(() => ({}));
-    const { alt_olcut_id, donem_id, icerik, icerik_en, kanitlar } = body;
+    const {
+      alt_olcut_id,
+      donem_id,
+      icerik,
+      icerik_en,
+      kanitlar,
+      birim_anket_degerlendirmesi,
+      yonetici_anket_analizi,
+    } = body;
 
     if (!alt_olcut_id || !donem_id) {
       return NextResponse.json({ error: 'alt_olcut_id ve donem_id zorunludur.' }, { status: 400 });
@@ -42,7 +51,17 @@ export async function POST(request: Request) {
 
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 3. Kullanıcı Yetki Kontrolü
+    // 3. Dönem ve Kullanıcı Yetki Kontrolü
+    const { data: period, error: periodError } = await supabaseAdmin
+      .from('donemler')
+      .select('id, is_active')
+      .eq('id', String(donem_id))
+      .maybeSingle();
+
+    if (periodError || !period) {
+      return NextResponse.json({ error: 'Geçerli bir dönem bulunamadı.' }, { status: 400 });
+    }
+
     const { data: profile } = await supabaseAdmin
       .from('profiller')
       .select('rol')
@@ -55,15 +74,23 @@ export async function POST(request: Request) {
       userRole.includes('yonetici') ||
       userRole.includes('admin');
 
+    if (!isAdmin && !period.is_active) {
+      return NextResponse.json(
+        { error: 'Kapalı dönemlerde rapor kaydedilemez veya güncellenemez.' },
+        { status: 403 }
+      );
+    }
+
     let isAuthorized = isAdmin;
 
     if (!isAuthorized) {
-      // Birim sorumlusu atama kontrolü
+      // Birim sorumlusu atama kontrolü (dönem eşleşmeli)
       const { count: assignmentCount } = await supabaseAdmin
         .from('kullanici_olcut_atamalari')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .eq('alt_olcut_id', Number(alt_olcut_id));
+        .eq('alt_olcut_id', Number(alt_olcut_id))
+        .eq('donem_id', String(donem_id));
 
       if ((assignmentCount || 0) > 0) {
         isAuthorized = true;
@@ -105,20 +132,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Bu ölçüte rapor kaydetme yetkiniz bulunmamaktadır.' }, { status: 403 });
     }
 
-    const upsertData = {
-      alt_olcut_id: String(alt_olcut_id),
-      donem_id: String(donem_id),
-      icerik: icerik ?? '',
-      icerik_en: icerik_en ?? '',
-      kanitlar: Array.isArray(kanitlar) ? kanitlar : [],
-      onay_durumu: 'bekliyor',
-      red_nedeni: null,
-    };
-
     // 4. Var olan kaydı kontrol et
     const { data: existingRecord } = await supabaseAdmin
       .from('ozdegerlendirme_raporlari')
-      .select('id')
+      .select('*')
       .eq('alt_olcut_id', String(alt_olcut_id))
       .eq('donem_id', String(donem_id))
       .order('olusturulma_tarihi', { ascending: false })
@@ -127,22 +144,79 @@ export async function POST(request: Request) {
 
     let resultRecord = null;
     if (existingRecord?.id) {
+      const updatePayload: Record<string, any> = {};
+      if (icerik !== undefined) {
+        updatePayload.icerik = icerik ?? '';
+        updatePayload.onay_durumu = 'bekliyor';
+        updatePayload.red_nedeni = null;
+      }
+      if (icerik_en !== undefined) {
+        updatePayload.icerik_en = icerik_en ?? '';
+      }
+      if (kanitlar !== undefined) {
+        updatePayload.kanitlar = Array.isArray(kanitlar) ? kanitlar : [];
+      }
+      if (birim_anket_degerlendirmesi !== undefined) {
+        updatePayload.birim_anket_degerlendirmesi = birim_anket_degerlendirmesi;
+      }
+      if (yonetici_anket_analizi !== undefined) {
+        updatePayload.yonetici_anket_analizi = yonetici_anket_analizi;
+      }
+
       const { data, error } = await supabaseAdmin
         .from('ozdegerlendirme_raporlari')
-        .update(upsertData)
+        .update(updatePayload)
         .eq('id', existingRecord.id)
         .select()
         .single();
       if (error) throw error;
       resultRecord = data;
     } else {
+      const insertPayload: Record<string, any> = {
+        alt_olcut_id: String(alt_olcut_id),
+        donem_id: String(donem_id),
+        icerik: icerik ?? '',
+        icerik_en: icerik_en ?? '',
+        kanitlar: Array.isArray(kanitlar) ? kanitlar : [],
+        onay_durumu: 'bekliyor',
+        red_nedeni: null,
+      };
+      if (birim_anket_degerlendirmesi !== undefined) {
+        insertPayload.birim_anket_degerlendirmesi = birim_anket_degerlendirmesi;
+      }
+      if (yonetici_anket_analizi !== undefined) {
+        insertPayload.yonetici_anket_analizi = yonetici_anket_analizi;
+      }
+
       const { data, error } = await supabaseAdmin
         .from('ozdegerlendirme_raporlari')
-        .insert(upsertData)
+        .insert(insertPayload)
         .select()
         .single();
       if (error) throw error;
       resultRecord = data;
+    }
+
+    // 5. ÖDR Kaydı ise işlem logu ve PUKÖ bildirim senkronizasyonu
+    if (icerik !== undefined && resultRecord?.id) {
+      await logAction({
+        supabase: supabaseAdmin,
+        userId: user.id,
+        islemTipi: existingRecord?.id ? 'UPDATE' : 'INSERT',
+        tabloAdi: 'ozdegerlendirme_raporlari',
+        kayitId: resultRecord.id,
+        eskiVeri: existingRecord || null,
+        yeniVeri: resultRecord,
+      });
+
+      if (!isAdmin) {
+        const { error: pErr } = await supabaseAdmin
+          .from('puko_degerlendirmeleri')
+          .update({ durum: 'Beklemede', red_nedeni: null })
+          .eq('alt_olcut_id', Number(alt_olcut_id))
+          .eq('donem_id', String(donem_id));
+        if (pErr) throw pErr;
+      }
     }
 
     return NextResponse.json({ success: true, data: resultRecord });

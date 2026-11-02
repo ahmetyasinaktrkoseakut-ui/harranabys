@@ -3,14 +3,13 @@
 import { useState, useEffect, use, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { Loader2, Info, FileSignature, FileText, CheckCircle2, FileSearch, Download, Save, Plus, Link as LinkIcon , AlertTriangle, X } from 'lucide-react';
-import { degerlendirTekOdr } from '@/lib/pukoStresTesti';
+import { degerlendirTekOdr, isHtmlContentEmpty } from '@/lib/pukoStresTesti';
 import StepPanel from '@/components/StepPanel';
 import { useTranslations, useLocale } from 'next-intl';
 import { useRouter } from '@/i18n/routing';
 import { getLocalizedField } from '@/lib/i18n-utils';
 import { usePeriod } from '@/contexts/PeriodContext';
 import RichTextEditor, { RichTextEditorRef } from '@/components/RichTextEditor';
-import { logAction } from '@/lib/logger';
 import { validateFileSize, getAssignedLetter, toProxyStorageUrl, sanitizeReportHtmlLinks } from '@/lib/utils';
 import { validateUploadedFile } from '@/lib/fileValidation';
 
@@ -134,7 +133,11 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
         setRaporMetni(sanitizeReportHtmlLinks(cleanIcerik, currentOrigin));
         setRaporMetniEn(sanitizeReportHtmlLinks(cleanIcerikEn, currentOrigin));
         setKanitlar(raporData?.kanitlar ?? []);
-        setRaporOlusturuldu(true);
+        const hasReportContent =
+          !isHtmlContentEmpty(cleanIcerik) ||
+          !isHtmlContentEmpty(cleanIcerikEn) ||
+          (Array.isArray(raporData?.kanitlar) && raporData.kanitlar.length > 0);
+        setRaporOlusturuldu(hasReportContent);
         setOnayDurumu(raporData?.onay_durumu || 'bekliyor');
         setRedNedeni(raporData?.red_nedeni);
       } else {
@@ -414,43 +417,8 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
         throw new Error(saveJson.error || 'Rapor kaydedilemedi.');
       }
 
-      // Rapor her kaydedildiğinde durumu 'bekliyor'a çek (Onaylanmış olsa bile tekrar onaya düşer)
-      const { data: currentRecord } = await supabase
-        .from('ozdegerlendirme_raporlari')
-        .select('id')
-        .eq('alt_olcut_id', String(resolvedParams.id))
-        .eq('donem_id', String(selectedPeriod.id))
-        .maybeSingle();
-
-      if (currentRecord) {
-        const { error: rErr } = await supabase
-          .from('ozdegerlendirme_raporlari')
-          .update({ onay_durumu: 'bekliyor', red_nedeni: null })
-          .eq('id', currentRecord.id);
-        if (rErr) throw rErr;
-
-        await logAction({
-          supabase,
-          islemTipi: 'UPDATE',
-          tabloAdi: 'ozdegerlendirme_raporlari',
-          kayitId: currentRecord.id,
-          yeniVeri: { ...upsertData, onay_durumu: 'bekliyor' }
-        });
-
-        if (!isAdmin) {
-          // BİLDİRİM SENKRONİZASYONU: Kullanıcı raporu güncellediğinde, puko durumlarını 'Beklemede'ye çek.
-          const { error: pErr } = await supabase
-            .from('puko_degerlendirmeleri')
-            .update({ durum: 'Beklemede', red_nedeni: null })
-            .eq('alt_olcut_id', String(resolvedParams.id))
-            .eq('donem_id', String(selectedPeriod.id));
-          if (pErr) throw pErr;
-        }
-
-        setOnayDurumu('bekliyor');
-        setRedNedeni(null);
-      }
-
+      setOnayDurumu('bekliyor');
+      setRedNedeni(null);
 
       alert(t('save_success'));
 
@@ -493,7 +461,10 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
     setIsActionSubmitting(true);
     try {
       // ozdegerlendirme_raporlari tablosunu ve PUKÖ aşama kanıtlarını kontrol et
-      const [{ data: currentRecord }, { data: stageRows }] = await Promise.all([
+      const [
+        { data: currentRecord, error: recordError },
+        { data: stageRows, error: stageError },
+      ] = await Promise.all([
         supabase
           .from('ozdegerlendirme_raporlari')
           .select('*')
@@ -506,6 +477,12 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
           .eq('alt_olcut_id', String(resolvedParams.id))
           .eq('donem_id', selectedPeriod?.id),
       ]);
+
+      if (recordError) throw recordError;
+      if (stageError) throw stageError;
+      if (!currentRecord) {
+        throw new Error('Onaylanacak rapor kaydı bulunamadı. Lütfen önce raporu kaydediniz.');
+      }
 
       const stressCheck = degerlendirTekOdr({
         altOlcutId: resolvedParams.id,
@@ -539,11 +516,12 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
         if (error) throw error;
         
         // BİLDİRİM SENKRONİZASYONU: PUKÖ tablosundaki o alt ölçüte ait tüm kayıtları 'Onaylandı' yap
-        await supabase
+        const { error: pukoError } = await supabase
           .from('puko_degerlendirmeleri')
           .update({ durum: 'Onaylandı', red_nedeni: null })
           .eq('alt_olcut_id', resolvedParams.id)
           .eq('donem_id', selectedPeriod?.id);
+        if (pukoError) throw pukoError;
 
         // Bildirim Ekleme İşlemi
         const { data: { user: currentUser } } = await supabase.auth.getUser();
