@@ -1,6 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 
-export type LogType = 'INSERT' | 'UPDATE' | 'DELETE' | 'SEAL';
+export type LogType = 'STRES_ISTISNA' | 'INSERT' | 'UPDATE' | 'DELETE' | 'SEAL';
 
 interface LogParams {
   supabase: SupabaseClient<any, any, any>;

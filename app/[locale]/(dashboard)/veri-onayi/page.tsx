@@ -12,7 +12,9 @@ import {
   Search,
   MessageSquare,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  ShieldAlert,
+  X
 } from 'lucide-react';
 import { usePeriod } from '@/contexts/PeriodContext';
 import Link from 'next/link';
@@ -37,6 +39,12 @@ export default function VeriOnayiPage() {
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // Exception Modal State
+  const [isApproveConfirmModalOpen, setIsApproveConfirmModalOpen] = useState(false);
+  const [approveWarningDetails, setApproveWarningDetails] = useState<string[]>([]);
+  const [pendingApproveReportId, setPendingApproveReportId] = useState<string | null>(null);
+  const [pendingApproveReportCode, setPendingApproveReportCode] = useState<string | null>(null);
   
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
@@ -139,9 +147,103 @@ export default function VeriOnayiPage() {
     }
   };
 
+  const executeApprove = async (id: string) => {
+    try {
+      setIsSubmitting(true);
+      
+      // 1. Raporu ve PUKÖ aşamalarının anlık durumlarını (snapshot) al
+      const { data: report, error: reportFetchError } = await supabase
+        .from('ozdegerlendirme_raporlari')
+        .select('id, alt_olcut_id, donem_id, onay_durumu, red_nedeni, olusturan_id, kullanici_id, user_id')
+        .eq('id', id)
+        .maybeSingle();
+      if (reportFetchError) throw reportFetchError;
+      if (!report) throw new Error('Onaylanacak rapor bulunamadı.');
+
+      const { data: currentStages, error: stagesFetchError } = await supabase
+        .from('puko_degerlendirmeleri')
+        .select('id, durum, red_nedeni')
+        .eq('alt_olcut_id', report.alt_olcut_id)
+        .eq('donem_id', report.donem_id);
+      if (stagesFetchError) throw stagesFetchError;
+
+      // 2. Raporu onayla
+      const { error: reportError } = await supabase
+        .from('ozdegerlendirme_raporlari')
+        .update({ onay_durumu: 'onaylandi', red_nedeni: null })
+        .eq('id', id);
+
+      if (reportError) throw reportError;
+
+      // 3. PUKÖ Tablosundaki ilgili tüm bildirimleri 'Onaylandı' yap
+      const { error: pukoError } = await supabase
+        .from('puko_degerlendirmeleri')
+        .update({ durum: 'Onaylandı', red_nedeni: null })
+        .eq('alt_olcut_id', report.alt_olcut_id)
+        .eq('donem_id', report.donem_id);
+
+      if (pukoError) {
+        // Telafi: ÖDR tablosunu eski onay_durumu ve red_nedeni değerine geri al
+        try {
+          await supabase
+            .from('ozdegerlendirme_raporlari')
+            .update({
+              onay_durumu: report.onay_durumu || 'bekliyor',
+              red_nedeni: report.red_nedeni || null
+            })
+            .eq('id', id);
+        } catch (rollbackErr) {
+          console.error("ÖDR telafi geri alma hatası:", rollbackErr);
+        }
+        throw new Error(`PUKÖ tablosu güncellenemedi (${pukoError.message}). ÖDR durumu geri alındı.`);
+      }
+
+      // 4. Her iki güncelleme de başarılı olduktan sonra işlem logu ve bildirim
+      try {
+        await logAction({
+          supabase,
+          islemTipi: 'UPDATE',
+          tabloAdi: 'ozdegerlendirme_raporlari (onay)',
+          kayitId: id,
+          yeniVeri: { durum: 'Onaylandı', alt_olcut_id: report.alt_olcut_id }
+        });
+      } catch (logErr) {
+        console.warn("Log kaydı oluşturulamadı:", logErr);
+      }
+
+      // Bildirim Ekleme İşlemi
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const targetUserId = report.olusturan_id || report.kullanici_id || report.user_id || null;
+      if (currentUser) {
+        try {
+          await supabase.from('bildirimler').insert({
+            gonderen_id: currentUser.id,
+            alici_id: targetUserId,
+            mesaj: `Özdeğerlendirme Raporunuz ONAYLANDI.`,
+            tip: 'onay',
+            ilgili_kayit_id: report.alt_olcut_id
+          });
+        } catch (e) {
+          console.warn("Bildirim tablosu henüz oluşturulmamış olabilir.", e);
+        }
+      }
+
+      setIsApproveConfirmModalOpen(false);
+      setPendingApproveReportId(null);
+      setPendingApproveReportCode(null);
+      setApproveWarningDetails([]);
+      setMessage({ type: 'success', text: 'Rapor ve ilgili PUKÖ kayıtları başarıyla onaylandı.' });
+      await fetchInitialData();
+
+    } catch (error: any) {
+      console.error("Onay hatası:", error);
+      setMessage({ type: 'error', text: error.message || 'Onaylanırken hata oluştu.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleApprove = async (id: string) => {
-    if (!window.confirm('Bu raporu onaylamak istediğinize emin misiniz?')) return;
-    
     try {
       setIsSubmitting(true);
       
@@ -152,7 +254,7 @@ export default function VeriOnayiPage() {
 
       const { data: stageRows, error: stageFetchError } = await supabase
         .from('puko_degerlendirmeleri')
-        .select('alt_olcut_id, puko_asamasi, aciklama, kanit_dosyalari, durum, donem_id')
+        .select('id, alt_olcut_id, puko_asamasi, aciklama, kanit_dosyalari, durum, red_nedeni, donem_id')
         .eq('alt_olcut_id', report.alt_olcut_id)
         .eq('donem_id', report.donem_id);
       if (stageFetchError) throw stageFetchError;
@@ -168,65 +270,24 @@ export default function VeriOnayiPage() {
         pukoStages: stageRows || [],
       });
 
-      if (stressCheck.uncitedTrEvidences && stressCheck.uncitedTrEvidences.length > 0) {
-        alert(`${stressCheck.warningMessage}\n\nLütfen ilgili ölçütün ÖDR sayfasında eksik kanıt atıflarını metne ekleyip kaydettikten sonra onaylayınız.`);
+      if (stressCheck.hasIssue && stressCheck.warningDetails && stressCheck.warningDetails.length > 0) {
+        setApproveWarningDetails(stressCheck.warningDetails);
+        setPendingApproveReportId(id);
+        setPendingApproveReportCode(matchedReport?.alt_olcutler?.kod || '');
+        setIsApproveConfirmModalOpen(true);
+        setIsSubmitting(false);
         return;
       }
 
-      // 2. Raporu onayla
-      const { error: reportError } = await supabase
-        .from('ozdegerlendirme_raporlari')
-        .update({ onay_durumu: 'onaylandi', red_nedeni: null })
-        .eq('id', id);
-
-      if (reportError) throw reportError;
-
-      // Bildirim Ekleme İşlemi
-      if (report) {
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
-        const targetUserId = report.olusturan_id || report.kullanici_id || report.user_id || null;
-        
-        if (currentUser) {
-          // Tablo yoksa hata fırlatmaması için try/catch içinde yapıyoruz
-          try {
-            await supabase.from('bildirimler').insert({
-              gonderen_id: currentUser.id,
-              alici_id: targetUserId,
-              mesaj: `Özdeğerlendirme Raporunuz ONAYLANDI.`,
-              tip: 'onay',
-              ilgili_kayit_id: report.alt_olcut_id
-            });
-          } catch (e) {
-            console.warn("Bildirim tablosu henüz oluşturulmamış olabilir.", e);
-          }
-        }
+      if (!window.confirm('Bu raporu onaylamak istediğinize emin misiniz?')) {
+        setIsSubmitting(false);
+        return;
       }
 
-      // 3. PUKÖ Tablosundaki ilgili tüm bildirimleri 'Onaylandı' yap (Yönetici panelinde de böyle gözükecek)
-      if (report) {
-        const { error: pukoError } = await supabase
-          .from('puko_degerlendirmeleri')
-          .update({ durum: 'Onaylandı', red_nedeni: null })
-          .eq('alt_olcut_id', report.alt_olcut_id)
-          .eq('donem_id', report.donem_id);
-        if (pukoError) throw pukoError;
-
-        await logAction({
-          supabase,
-          islemTipi: 'UPDATE',
-          tabloAdi: 'ozdegerlendirme_raporlari (onay)',
-          kayitId: id,
-          yeniVeri: { durum: 'Onaylandı', alt_olcut_id: report.alt_olcut_id }
-        });
-      }
-
-      setMessage({ type: 'success', text: 'Rapor ve ilgili PUKÖ kayıtları başarıyla onaylandı.' });
-      await fetchInitialData(); // En güncel veriyi çekerek onaylananların listeden düşmesini sağla
-
+      await executeApprove(id);
     } catch (error: any) {
-      console.error("Onay hatası:", error);
-      setMessage({ type: 'error', text: 'Onaylanırken hata oluştu.' });
-    } finally {
+      console.error("Onay kontrol hatası:", error);
+      setMessage({ type: 'error', text: 'Onay kontrolü sırasında hata oluştu.' });
       setIsSubmitting(false);
     }
   };
@@ -262,7 +323,7 @@ export default function VeriOnayiPage() {
       setRejectReason('');
     } catch (error: any) {
       console.error("Red hatası:", error);
-      setMessage({ type: 'error', text: 'Reddedilirken hata oluştu: ' + (error?.message || '') });
+      setMessage({ type: 'error', text: 'Reddedilirken hata oluştu.' });
     } finally {
       setIsSubmitting(false);
     }
@@ -397,6 +458,73 @@ export default function VeriOnayiPage() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Koordinatör İstisna Onay Modalı */}
+      {isApproveConfirmModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl border border-amber-200 w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-5 border-b border-amber-100 flex items-center justify-between bg-amber-50/70">
+              <h3 className="font-bold text-amber-900 flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-amber-600" />
+                ÖDR / PUKÖ Bütünlük Uyarısı
+              </h3>
+              <button 
+                onClick={() => {
+                  setIsApproveConfirmModalOpen(false);
+                  setPendingApproveReportId(null);
+                  setPendingApproveReportCode(null);
+                }} 
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-700 leading-relaxed">
+                Bu raporda ({pendingApproveReportCode}) aşağıdaki uyarılar tespit edilmiştir:
+              </p>
+              <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-4 max-h-56 overflow-y-auto space-y-2 text-xs text-amber-900">
+                {approveWarningDetails.map((warn, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <span className="font-bold shrink-0">•</span>
+                    <span>{warn}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500 italic">
+                Raporu yine de onaylamak istiyorsanız &ldquo;İstisna Olarak Onayla&rdquo; butonuna tıklayınız.
+              </p>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsApproveConfirmModalOpen(false);
+                  setPendingApproveReportId(null);
+                  setPendingApproveReportCode(null);
+                }}
+                disabled={isSubmitting}
+                className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 transition-colors"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (pendingApproveReportId) {
+                    executeApprove(pendingApproveReportId);
+                  }
+                }}
+                disabled={isSubmitting}
+                className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-amber-600 border border-amber-600 rounded-xl hover:bg-amber-700 transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                Uyarıları İnceledim, İstisna Olarak Onayla
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

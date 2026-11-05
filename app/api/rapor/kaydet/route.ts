@@ -143,12 +143,16 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     let resultRecord = null;
+    const isReportContentUpdated = (icerik !== undefined || icerik_en !== undefined || kanitlar !== undefined);
+
     if (existingRecord?.id) {
       const updatePayload: Record<string, any> = {};
-      if (icerik !== undefined) {
-        updatePayload.icerik = icerik ?? '';
+      if (isReportContentUpdated) {
         updatePayload.onay_durumu = 'bekliyor';
         updatePayload.red_nedeni = null;
+      }
+      if (icerik !== undefined) {
+        updatePayload.icerik = icerik ?? '';
       }
       if (icerik_en !== undefined) {
         updatePayload.icerik_en = icerik_en ?? '';
@@ -197,8 +201,46 @@ export async function POST(request: Request) {
       resultRecord = data;
     }
 
-    // 5. ÖDR Kaydı ise işlem logu ve PUKÖ bildirim senkronizasyonu
-    if (icerik !== undefined && resultRecord?.id) {
+    // 5. ÖDR Kaydı ise PUKÖ senkronizasyonu ve ardından işlem logu
+    if (isReportContentUpdated && resultRecord?.id) {
+      // Hoca veya Admin fark etmeksizin PUKÖ tablosuyla tam senkronizasyon sağla
+      const { error: pErr } = await supabaseAdmin
+        .from('puko_degerlendirmeleri')
+        .update({ durum: 'Beklemede', red_nedeni: null })
+        .eq('alt_olcut_id', Number(alt_olcut_id))
+        .eq('donem_id', String(donem_id));
+
+      if (pErr) {
+        // Telafi denemesi: PUKÖ güncellenemezse ÖDR'yi eski haline döndür
+        try {
+          if (!existingRecord?.id) {
+            // Yeni oluşturulmuş (INSERT) kayıt ise sil
+            await supabaseAdmin
+              .from('ozdegerlendirme_raporlari')
+              .delete()
+              .eq('id', resultRecord.id);
+          } else {
+            // Var olan (UPDATE) kayıt ise eski içerik ve onay durumuna geri döndür
+            await supabaseAdmin
+              .from('ozdegerlendirme_raporlari')
+              .update({
+                icerik: existingRecord.icerik,
+                icerik_en: existingRecord.icerik_en,
+                kanitlar: existingRecord.kanitlar,
+                onay_durumu: existingRecord.onay_durumu,
+                red_nedeni: existingRecord.red_nedeni,
+                birim_anket_degerlendirmesi: existingRecord.birim_anket_degerlendirmesi,
+                yonetici_anket_analizi: existingRecord.yonetici_anket_analizi,
+              })
+              .eq('id', existingRecord.id);
+          }
+        } catch (rollbackErr) {
+          console.error('ÖDR telafi geri alma hatası:', rollbackErr);
+        }
+        throw new Error(`PUKÖ tablosu senkronize edilemedi (${pErr.message}). ÖDR değişiklikleri geri alındı.`);
+      }
+
+      // YALNIZCA İKİ GÜNCELLEME DE BAŞARILI OLDUKTAN SONRA LOGACTION ÇALIŞIR
       await logAction({
         supabase: supabaseAdmin,
         userId: user.id,
@@ -208,15 +250,6 @@ export async function POST(request: Request) {
         eskiVeri: existingRecord || null,
         yeniVeri: resultRecord,
       });
-
-      if (!isAdmin) {
-        const { error: pErr } = await supabaseAdmin
-          .from('puko_degerlendirmeleri')
-          .update({ durum: 'Beklemede', red_nedeni: null })
-          .eq('alt_olcut_id', Number(alt_olcut_id))
-          .eq('donem_id', String(donem_id));
-        if (pErr) throw pErr;
-      }
     }
 
     return NextResponse.json({ success: true, data: resultRecord });

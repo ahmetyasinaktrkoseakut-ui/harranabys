@@ -88,7 +88,7 @@ export interface IngilizceOdrSorunu {
   alt_olcut_id: number | string;
   kod: string;
   olcut_adi: string;
-  sorun_tipi: 'bos_veya_kopyalanmis' | 'kanit_baglantisi_eksik';
+  sorun_tipi: 'bos_veya_kopyalanmis' | 'kanit_baglantisi_eksik' | 'mukerrer_kanit' | 'parite_eksik_kanit' | 'sira_kopuklugu';
   aciklama: string;
   eksik_kanitlar?: string[];
 }
@@ -130,6 +130,23 @@ export function normalizeHtmlForComparison(html: string | null | undefined): str
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+}
+
+/**
+ * [Kanıt N] ve [Evidence N] atıflarını zengin metin düzenleyicilerin (TipTap vb.)
+ * böldüğü etiketlerden (örn. [Evidence <strong>4</strong>] veya <a...>[</a>Evidence 4])
+ * arındırıp doğru okumak için HTML etiketlerini ve özel boşlukları temizler.
+ */
+export function normalizeHtmlForCitation(html: string | null | undefined): string {
+  if (!html) return '';
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
@@ -503,7 +520,7 @@ export function calistirPukoStresTesti(params: {
   return {
     odrAlinmamisOlcutler,
     asamadaVarOdrdeYok,
-    bosAsamalar: [],
+    bosAsamalar,
     ingilizceOdrSorunlari,
     toplamSorun: odrAlinmamisOlcutler.length + asamadaVarOdrdeYok.length + ingilizceOdrSorunlari.length,
   };
@@ -684,28 +701,68 @@ export function denetleIngilizceOdr(params: {
     }
   });
 
+  // Türkçe ÖDR metninde geçen kanıt numaralarını etiketlerden arındırılmış metin üzerinden dinamik olarak tespit et
+  const trNormalized = normalizeHtmlForCitation(icerikTr);
+  const trCitationRegex = /\[\s*Kan[ıi]t\s*(\d+)\s*\]/gi;
+  const trCitedNumbers = new Set<number>();
+  let trMatch: RegExpExecArray | null;
+  while ((trMatch = trCitationRegex.exec(trNormalized)) !== null) {
+    trCitedNumbers.add(parseInt(trMatch[1], 10));
+  }
+
   const anchorLinks = extractEvidenceLinks(htmlEn);
 
-  // Metindeki tüm [Evidence N] ve [Kanıt N] ifadelerini regex ile tara
+  // Metindeki tüm [Evidence N] ve [Kanıt N] ifadelerini etiketlerden arındırılmış metin üzerinden tara ve frekanslarını say
+  const enNormalized = normalizeHtmlForCitation(htmlEn);
   const citationRegex = /\[\s*(?:Evidence|Kan[ıi]t)\s*(\d+)\s*\]/gi;
-  const mentionedNumbers = new Set<number>();
+  const enFrequencies = new Map<number, number>();
   let match: RegExpExecArray | null;
-  while ((match = citationRegex.exec(htmlEn)) !== null) {
-    mentionedNumbers.add(parseInt(match[1], 10));
+  while ((match = citationRegex.exec(enNormalized)) !== null) {
+    const num = parseInt(match[1], 10);
+    enFrequencies.set(num, (enFrequencies.get(num) || 0) + 1);
   }
+
+  // 1. Mükerrer Kanıt Denetimi: Aynı kanıt numarasının birden fazla kez geçmesi
+  enFrequencies.forEach((count, num) => {
+    if (count > 1) {
+      issues.push({
+        alt_olcut_id: altOlcutId,
+        kod,
+        olcut_adi: olcutAdi,
+        sorun_tipi: 'mukerrer_kanit',
+        aciklama: `İngilizce ÖDR metninde [Evidence ${num}] (veya [Kanıt ${num}]) ${count} kez mükerrer kullanılmıştır.`,
+        eksik_kanitlar: [`[Evidence ${num}]`],
+      });
+    }
+  });
+
+  // 2. Parite Denetimi: Türkçe raporda atıf alan kanıtların İngilizce metinde bulunması zorunludur
+  trCitedNumbers.forEach(trNum => {
+    if (!enFrequencies.has(trNum)) {
+      issues.push({
+        alt_olcut_id: altOlcutId,
+        kod,
+        olcut_adi: olcutAdi,
+        sorun_tipi: 'parite_eksik_kanit',
+        aciklama: `Türkçe raporda atıf alan [Kanıt ${trNum}] İngilizce metinde yer almamaktadır.`,
+        eksik_kanitlar: [`[Evidence ${trNum}]`],
+      });
+    }
+  });
 
   // Anchor etiketleri dışındaki düz metin [Evidence N] ve [Kanıt N] ifadelerini tespit et
   // Çok satırlı bağlantıları da temizleyebilmek için [\s\S]*? deseni kullanılır
   const textWithoutAnchors = htmlEn.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, ' ');
+  const cleanTextWithoutAnchors = normalizeHtmlForCitation(textWithoutAnchors);
   const plainTextNumbers = new Set<number>();
   let plainMatch: RegExpExecArray | null;
-  while ((plainMatch = citationRegex.exec(textWithoutAnchors)) !== null) {
+  while ((plainMatch = citationRegex.exec(cleanTextWithoutAnchors)) !== null) {
     plainTextNumbers.add(parseInt(plainMatch[1], 10));
   }
 
   const missingEvidenceLabels: string[] = [];
 
-  mentionedNumbers.forEach(evNum => {
+  enFrequencies.forEach((_, evNum) => {
     // 1. Hedef kanıt nesnesini bul:
     // Sırasıyla e.no === evNum, e.evidence_no === evNum veya 1-based index (evNum - 1)
     const targetIdx = evNum - 1;
@@ -795,6 +852,14 @@ export function denetleIngilizceOdr(params: {
   return issues;
 }
 
+export interface TekOdrDegerlendirmeSonucu {
+  hasIssue: boolean;
+  warningMessage: string | null;
+  warningDetails: string[];
+  issues: IngilizceOdrSorunu[];
+  uncitedTrEvidences: Array<{ kanit_no?: number | string; dosya_adi: string; asama: string; url?: string }>;
+}
+
 /**
  * Tekil ÖDR kaydı kaydedildiğinde veya onaylanırken hem Türkçe metindeki kanıt atıflarını
  * hem de İngilizce ÖDR bütünlüğünü denetler.
@@ -807,12 +872,7 @@ export function degerlendirTekOdr(params: {
   icerikEn: string | null | undefined;
   kanitlar: any[] | null | undefined;
   pukoStages?: PukoKayit[] | null;
-}): {
-  hasIssue: boolean;
-  warningMessage: string | null;
-  issues: IngilizceOdrSorunu[];
-  uncitedTrEvidences: Array<{ kanit_no?: number | string; dosya_adi: string; asama: string }>;
-} {
+}): TekOdrDegerlendirmeSonucu {
   const htmlTr = params.icerikTr || '';
   const pukoStages = Array.isArray(params.pukoStages) ? params.pukoStages : [];
   const allStageEvidences: KanitDosyasi[] = [];
@@ -867,34 +927,39 @@ export function degerlendirTekOdr(params: {
 
   const issues = denetleIngilizceOdr(params);
 
-  if (uncitedTrEvidences.length === 0 && issues.length === 0) {
-    return { hasIssue: false, warningMessage: null, issues: [], uncitedTrEvidences: [] };
-  }
+  const warningDetails: string[] = [];
 
-  const warnings: string[] = [];
-
+  // 1. Türkçe ÖDR'de atıf almamış aşama kanıtlarının tamamı:
   if (uncitedTrEvidences.length > 0) {
-    const trLabels = uncitedTrEvidences
-      .map(u => (u.kanit_no ? `[Kanıt ${u.kanit_no}] ${u.dosya_adi}` : u.dosya_adi))
-      .join(', ');
-    warnings.push(`Stres Testi Uyarısı: Aşamalarda yer alan (${trLabels}) ÖDR metni içerisinde henüz atıf almamıştır.`);
+    uncitedTrEvidences.forEach(u => {
+      const label = u.kanit_no ? `[Kanıt ${u.kanit_no}]` : '[Kanıt]';
+      warningDetails.push(`${label} ${u.dosya_adi} (${u.asama} aşaması) - Türkçe ÖDR metninde henüz atıf almamıştır.`);
+    });
   }
 
+  // 2. İngilizce ÖDR'deki tüm sorunların (issues) tamamı:
   if (issues.length > 0) {
-    const primaryIssue = issues[0];
-    if (primaryIssue.sorun_tipi === 'bos_veya_kopyalanmis') {
-      warnings.push('Stres Testi Bilgilendirmesi: İngilizce ÖDR içeriği henüz girilmemiş veya Türkçe metinle aynı bırakılmış.');
-    } else if (primaryIssue.sorun_tipi === 'kanit_baglantisi_eksik') {
-      const labels = primaryIssue.eksik_kanitlar?.join(', ') || '';
-      warnings.push(`Stres Testi Bilgilendirmesi: İngilizce ÖDR metninde ${labels} için geçerli kanıt bağlantısı bulunamadı veya yanlış numaraya bağlanmış.`);
-    } else {
-      warnings.push(primaryIssue.aciklama);
-    }
+    issues.forEach(issue => {
+      warningDetails.push(issue.aciklama);
+    });
+  }
+
+  const hasIssue = uncitedTrEvidences.length > 0 || issues.length > 0;
+
+  if (!hasIssue) {
+    return {
+      hasIssue: false,
+      warningMessage: null,
+      warningDetails: [],
+      issues: [],
+      uncitedTrEvidences: [],
+    };
   }
 
   return {
     hasIssue: true,
-    warningMessage: warnings.join(' | '),
+    warningMessage: warningDetails.join(' | '),
+    warningDetails,
     issues,
     uncitedTrEvidences,
   };

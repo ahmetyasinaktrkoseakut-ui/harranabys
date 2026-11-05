@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Presentation, Activity, Calendar, Info, Hash, Upload, X, Loader2, Check } from 'lucide-react';
+import { Presentation, Activity, Calendar, Info, Hash, Upload, X, Loader2, Check, ShieldAlert, AlertTriangle } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 import { useRouter } from '@/i18n/routing';
 import { useLocale, useTranslations } from 'next-intl';
@@ -40,6 +40,9 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [selectedRejectRow, setSelectedRejectRow] = useState<any>(null);
+  const [isApproveConfirmModalOpen, setIsApproveConfirmModalOpen] = useState(false);
+  const [approveWarningDetails, setApproveWarningDetails] = useState<string[]>([]);
+  const [pendingApproveRow, setPendingApproveRow] = useState<any>(null);
   const router = useRouter();
   const locale = useLocale();
 
@@ -90,46 +93,31 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
 
   const currentData = data || [];
 
-  const handleApprove = async (row: any) => {
+  const executeApprove = async (row: any) => {
     setActionLoadingId(row.id);
     try {
       const activePeriodId = row.donem_id || selectedPeriod?.id;
 
-      // 0. Onay öncesi ÖDR kanıt-metin bütünlüğü kontrolü
+      // 0. Anlık snapshot al (id, onay_durumu ve her satırın red_nedeni ile birlikte)
       const [
-        { data: odrRec, error: odrReadError },
-        { data: stageRows, error: stageReadError },
+        { data: currentOdr, error: odrFetchErr },
+        { data: currentStages, error: stagesFetchErr }
       ] = await Promise.all([
         supabase
           .from('ozdegerlendirme_raporlari')
-          .select('icerik, icerik_en, kanitlar')
+          .select('id, onay_durumu, red_nedeni')
           .eq('alt_olcut_id', String(row.alt_olcut_id))
           .eq('donem_id', activePeriodId)
           .maybeSingle(),
         supabase
           .from('puko_degerlendirmeleri')
-          .select('alt_olcut_id, puko_asamasi, aciklama, kanit_dosyalari, durum, donem_id')
+          .select('id, durum, red_nedeni')
           .eq('alt_olcut_id', row.alt_olcut_id)
-          .eq('donem_id', activePeriodId),
+          .eq('donem_id', activePeriodId)
       ]);
 
-      if (odrReadError) throw odrReadError;
-      if (stageReadError) throw stageReadError;
-
-      const stressCheck = degerlendirTekOdr({
-        altOlcutId: row.alt_olcut_id,
-        kod: row.alt_olcutler?.kod || '',
-        olcutAdi: row.alt_olcutler?.olcut_adi || '',
-        icerikTr: odrRec?.icerik,
-        icerikEn: odrRec?.icerik_en,
-        kanitlar: odrRec?.kanitlar,
-        pukoStages: stageRows || [],
-      });
-
-      if (stressCheck.uncitedTrEvidences && stressCheck.uncitedTrEvidences.length > 0) {
-        alert(`${stressCheck.warningMessage}\n\nLütfen ilgili ölçütün ÖDR sayfasında eksik kanıt atıflarını metne ekleyip kaydettikten sonra onaylayınız.`);
-        return;
-      }
+      if (odrFetchErr) throw odrFetchErr;
+      if (stagesFetchErr) throw stagesFetchErr;
 
       // 1. PUKÖ tablosundaki o alt ölçüte ve döneme ait TÜM kayıtları 'Onaylandı' yap
       let pukoQuery = supabase
@@ -152,7 +140,24 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
         ozdQuery = ozdQuery.eq('donem_id', activePeriodId);
       }
       const { error: ozdError } = await ozdQuery;
-      if (ozdError) throw ozdError;
+      if (ozdError) {
+        // Telafi: PUKÖ satırlarının her birini kendi id'si üzerinden eski durumuna geri döndür
+        try {
+          if (currentStages && currentStages.length > 0) {
+            await Promise.all(
+              currentStages.map(stage =>
+                supabase
+                  .from('puko_degerlendirmeleri')
+                  .update({ durum: stage.durum, red_nedeni: stage.red_nedeni })
+                  .eq('id', stage.id)
+              )
+            );
+          }
+        } catch (rollbackErr) {
+          console.error("PUKÖ satırları telafi geri alma hatası:", rollbackErr);
+        }
+        throw new Error(`ÖDR onay durumu güncellenemedi (${ozdError.message}). PUKÖ durumları geri alındı.`);
+      }
 
       // 3. Bildirim tablosuna onay bildirimi ekle
       try {
@@ -171,9 +176,63 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
       }
 
       setData(prev => prev.filter(item => item.alt_olcut_id !== row.alt_olcut_id));
+      setIsApproveConfirmModalOpen(false);
+      setPendingApproveRow(null);
+      setApproveWarningDetails([]);
     } catch (err: any) {
       alert('Onay sırasında hata: ' + err.message);
     } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleApprove = async (row: any) => {
+    setActionLoadingId(row.id);
+    try {
+      const activePeriodId = row.donem_id || selectedPeriod?.id;
+
+      // 0. Onay öncesi ÖDR kanıt-metin bütünlüğü kontrolü
+      const [
+        { data: odrRec, error: odrReadError },
+        { data: stageRows, error: stageReadError },
+      ] = await Promise.all([
+        supabase
+          .from('ozdegerlendirme_raporlari')
+          .select('id, icerik, icerik_en, kanitlar, onay_durumu, red_nedeni')
+          .eq('alt_olcut_id', String(row.alt_olcut_id))
+          .eq('donem_id', activePeriodId)
+          .maybeSingle(),
+        supabase
+          .from('puko_degerlendirmeleri')
+          .select('id, alt_olcut_id, puko_asamasi, aciklama, kanit_dosyalari, durum, red_nedeni, donem_id')
+          .eq('alt_olcut_id', row.alt_olcut_id)
+          .eq('donem_id', activePeriodId),
+      ]);
+
+      if (odrReadError) throw odrReadError;
+      if (stageReadError) throw stageReadError;
+
+      const stressCheck = degerlendirTekOdr({
+        altOlcutId: row.alt_olcut_id,
+        kod: row.alt_olcutler?.kod || '',
+        olcutAdi: row.alt_olcutler?.olcut_adi || '',
+        icerikTr: odrRec?.icerik,
+        icerikEn: odrRec?.icerik_en,
+        kanitlar: odrRec?.kanitlar,
+        pukoStages: stageRows || [],
+      });
+
+      if (stressCheck.hasIssue && stressCheck.warningDetails && stressCheck.warningDetails.length > 0) {
+        setApproveWarningDetails(stressCheck.warningDetails);
+        setPendingApproveRow(row);
+        setIsApproveConfirmModalOpen(true);
+        setActionLoadingId(null);
+        return;
+      }
+
+      await executeApprove(row);
+    } catch (err: any) {
+      alert('Onay kontrolü sırasında hata: ' + err.message);
       setActionLoadingId(null);
     }
   };
@@ -565,6 +624,70 @@ export default function BildirimlerTableClient({ initialData, isApprover = false
               >
                 {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
                 Onayla &amp; Reddet
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Yönetici İstisna Onay Modalı */}
+      {isApproveConfirmModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl border border-amber-200 w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-5 border-b border-amber-100 flex items-center justify-between bg-amber-50/70">
+              <h3 className="font-bold text-amber-900 flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-amber-600" />
+                ÖDR / PUKÖ Bütünlük Uyarısı
+              </h3>
+              <button 
+                onClick={() => {
+                  setIsApproveConfirmModalOpen(false);
+                  setPendingApproveRow(null);
+                }} 
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-700 leading-relaxed">
+                Bu ölçütte ({pendingApproveRow?.alt_olcutler?.kod}) aşağıdaki uyarılar tespit edilmiştir:
+              </p>
+              <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-4 max-h-56 overflow-y-auto space-y-2 text-xs text-amber-900">
+                {approveWarningDetails.map((warn, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <span className="font-bold shrink-0">•</span>
+                    <span>{warn}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500 italic">
+                Raporu yine de onaylamak istiyorsanız &ldquo;İstisna Olarak Onayla&rdquo; butonuna tıklayınız.
+              </p>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsApproveConfirmModalOpen(false);
+                  setPendingApproveRow(null);
+                }}
+                disabled={actionLoadingId !== null}
+                className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 transition-colors"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (pendingApproveRow) {
+                    executeApprove(pendingApproveRow);
+                  }
+                }}
+                disabled={actionLoadingId !== null}
+                className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-amber-600 border border-amber-600 rounded-xl hover:bg-amber-700 transition-colors shadow-sm disabled:opacity-50"
+              >
+                {actionLoadingId && <Loader2 className="w-4 h-4 animate-spin" />}
+                Uyarıları İnceledim, İstisna Olarak Onayla
               </button>
             </div>
           </div>
