@@ -224,6 +224,14 @@ export default function AktiviteGunluguPage() {
     const action = log.islem_tipi;
     const table = log.tablo_adi || '';
     
+    if (action === 'STRES_ISTISNA') {
+      const data = log.yeni_veri || {};
+      const isAktif = data.aktif !== false;
+      return isAktif
+        ? t('details.stress_exception_active')
+        : t('details.stress_exception_inactive');
+    }
+
     if (table.includes('puko_degerlendirmeleri')) {
       const data = log.yeni_veri || log.eski_veri || {};
       
@@ -329,6 +337,8 @@ export default function AktiviteGunluguPage() {
         return 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/50';
       case 'SEAL':
         return 'bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/50';
+      case 'STRES_ISTISNA':
+        return 'bg-purple-50 dark:bg-purple-950/30 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800/50';
       default:
         return 'bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800';
     }
@@ -408,6 +418,7 @@ export default function AktiviteGunluguPage() {
               <option value="UPDATE">{t('action_types.UPDATE')}</option>
               <option value="DELETE">{t('action_types.DELETE')}</option>
               <option value="SEAL">{t('action_types.SEAL')}</option>
+              <option value="STRES_ISTISNA">{t('action_types.STRES_ISTISNA')}</option>
             </select>
           </div>
 

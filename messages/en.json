@@ -585,9 +585,12 @@
       "INSERT": "Insert",
       "UPDATE": "Update",
       "DELETE": "Delete",
-      "SEAL": "Seal"
+      "SEAL": "Seal",
+      "STRES_ISTISNA": "Stress Test Exception"
     },
     "details": {
+      "stress_exception_active": "Self-Evaluation Stress Test Exception Defined (No Issue)",
+      "stress_exception_inactive": "Self-Evaluation Stress Test Exception Reverted",
       "puko_insert": "New PDCA evaluation entered ({phase} Phase, Status: {status})",
       "puko_update": "PDCA evaluation updated ({phase} Phase, Status: {status})",
       "evidence_delete": "Evidence file deleted: {fileName}",

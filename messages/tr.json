@@ -584,9 +584,12 @@
       "INSERT": "Ekleme",
       "UPDATE": "Güncelleme",
       "DELETE": "Silme",
-      "SEAL": "Mühürleme"
+      "SEAL": "Mühürleme",
+      "STRES_ISTISNA": "Stres Testi İstisnası"
     },
     "details": {
+      "stress_exception_active": "ÖDR Stres Testi İstisnası Tanımlandı (Sorun Yok)",
+      "stress_exception_inactive": "ÖDR Stres Testi İstisnası Geri Alındı",
       "puko_insert": "Yeni PUKÖ değerlendirmesi girildi ({phase} Aşaması, Durum: {status})",
       "puko_update": "PUKÖ değerlendirmesi güncellendi ({phase} Aşaması, Durum: {status})",
       "evidence_delete": "Kanıt dosyası silindi: {fileName}",

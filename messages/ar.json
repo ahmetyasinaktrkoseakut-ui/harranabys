@@ -584,9 +584,12 @@
       "INSERT": "إضافة",
       "UPDATE": "تحديث",
       "DELETE": "حذف",
-      "SEAL": "ختم"
+      "SEAL": "ختم",
+      "STRES_ISTISNA": "استثناء اختبار الإجهاد"
     },
     "details": {
+      "stress_exception_active": "تم تحديد استثناء لاختبار الإجهاد لتقرير التقييم الذاتي",
+      "stress_exception_inactive": "تم التراجع عن استثناء اختبار الإجهاد لتقرير التقييم الذاتي",
       "puko_insert": "تم إدخال تقييم PUKÖ جديد (مرحلة {phase}، الحالة: {status})",
       "puko_update": "تم تحديث تقييم PUKÖ (مرحلة {phase}، الحالة: {status})",
       "evidence_delete": "تم حذف ملف الإثبات: {fileName}",
