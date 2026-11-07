@@ -308,7 +308,7 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
           if (row.kanit_dosyalari && Array.isArray(row.kanit_dosyalari) && row.kanit_dosyalari.length > 0) {
             const unplacedEvidenceStrings: string[] = [];
             row.kanit_dosyalari.forEach((k: any) => {
-              let ev = birlesikKanitlar.find(e => e.url === k.url);
+              let ev = k.url ? birlesikKanitlar.find(e => Boolean(e.url) && e.url === k.url) : null;
               if (!ev) {
                 ev = { ...k, no: localEvidenceCounter++ };
                 birlesikKanitlar.push(ev);
@@ -377,7 +377,8 @@ export default function OzdegerlendirmeRaporuClient({ params }: OzdegerlendirmeR
         } else {
           if (row.kanit_dosyalari && Array.isArray(row.kanit_dosyalari)) {
              row.kanit_dosyalari.forEach((k: any) => {
-               if (!birlesikKanitlar.find(e => e.url === k.url)) {
+               const exists = k.url ? birlesikKanitlar.some(e => Boolean(e.url) && e.url === k.url) : false;
+               if (!exists) {
                  birlesikKanitlar.push({ ...k, no: localEvidenceCounter++ });
                }
              });

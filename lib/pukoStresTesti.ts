@@ -73,6 +73,7 @@ export interface AsamadaVarOdrdeYokKanit {
   puko_asamasi: string;
   kanit_adi: string;
   kanit_url: string;
+  durum_aciklamasi?: string;
 }
 
 export interface BosAsama {
@@ -349,55 +350,78 @@ export function urlsMatch(href1?: string, href2?: string, defaultBucket?: string
  * Yalnızca metinde geçen [Kanıt N] gibi düz metinler gerçek atıf sayılmaz;
  * <a> etiketinde data-evidence-id veya href doğrulaması zorunludur.
  */
-export function isEvidenceLinkedInHtml(html: string | null | undefined, evidence: KanitDosyasi): boolean {
-  if (!html || !evidence) return false;
-  const links = extractEvidenceLinks(html);
-  if (links.length === 0) return false;
+/**
+ * Bir <a> bağlantısının verilen kanıt nesnesine işaret edip etmediğini kesin kurallarla doğrular.
+ * - Kanıt kaydında beklenen URL biliniyorsa, anchor'ın href'i bu URL ile eşleşmeli.
+ *   data-evidence-id eşleşmesi, bilinen ama farklı bir href'i geçerli kılmaz.
+ * - Kanıt kaydında URL yoksa, rastgele dolu bir href geçerli sayılmaz; yalnızca beklenen kanıtın kararlı ID'siyle doğrulanırsa kabul edilir.
+ * - ID ve URL birlikte mevcutsa çelişen ID veya href reddedilir.
+ */
+export function doesAnchorMatchEvidence(
+  link: HtmlEvidenceLink,
+  evidence: KanitDosyasi
+): { matches: boolean; hasConflict: boolean } {
+  const linkHref = link.href?.trim();
+  const linkHasHref = Boolean(linkHref && linkHref !== '#');
+  const linkEvId = link.evidenceId?.trim();
 
-  const evId = (evidence.evidence_id || evidence.id || '').trim();
+  // Tıklanabilir bağlantı olması için <a> etiketinde MUTLAKA geçerli bir href bulunmalıdır (# veya boş olamaz).
+  // href yoksa bağlantı sayılmaz ve hedef uyuşmazlığı hatası üretilmez.
+  if (!linkHasHref) {
+    return { matches: false, hasConflict: false };
+  }
+
   const evUrl = (evidence.url || evidence.dosya_url || '').trim();
   const evAnnotatedUrl = (evidence.annotated_url || '').trim();
   const evStoragePath = (evidence.storagePath || '').trim();
+  const evId = (evidence.evidence_id || evidence.id || '').trim();
+
+  // 1. Kararlı ID kontrolü: İki tarafta da ID varsa ve uyuşmuyorsa doğrudan çelişkidir, REDDET!
+  if (linkEvId && evId && linkEvId !== evId) {
+    return { matches: false, hasConflict: true };
+  }
 
   // Kanıt nesnesinin ait olduğu kesin bucket'ı belirle
   const urlRef = parseStorageReference(evUrl) || parseStorageReference(evAnnotatedUrl);
   const evBucket = (evidence.bucket || urlRef?.bucket || 'dokumanlar').trim();
   const evHasUrl = Boolean(evUrl || evAnnotatedUrl || evStoragePath);
 
-  return links.some(link => {
-    const linkHref = link.href?.trim();
-    const linkHasHref = Boolean(linkHref && linkHref !== '#');
-
-    // 1. Eğer bağlantıda href varsa ve kanıtın URL'si belliyse:
-    if (linkHasHref && evHasUrl) {
-      const matchesHref = Boolean(
-        (evUrl && urlsMatch(linkHref, evUrl, evBucket)) ||
-        (evAnnotatedUrl && urlsMatch(linkHref, evAnnotatedUrl, evBucket)) ||
-        (evStoragePath && urlsMatch(linkHref, evStoragePath, evBucket))
-      );
-      // Href mevcut ama kanıtın URL/bucket'ı ile eşleşmiyorsa (örn. yanlış bucket kanit_dosyalari vs dokumanlar):
-      // data-evidence-id eşleşse dahi bu bağlantı YANLIŞ hedefe işaret etmektedir, KESİNLİKLE REDDEDİLİR!
-      if (!matchesHref) {
-        return false;
-      }
+  // 2. Kanıt kaydında beklenen URL biliniyorsa:
+  if (evHasUrl) {
+    const matchesHref = Boolean(
+      (evUrl && urlsMatch(linkHref, evUrl, evBucket)) ||
+      (evAnnotatedUrl && urlsMatch(linkHref, evAnnotatedUrl, evBucket)) ||
+      (evStoragePath && urlsMatch(linkHref, evStoragePath, evBucket))
+    );
+    if (!matchesHref) {
+      // Beklenen URL var ama linkteki href farklı -> data-evidence-id eşleşse dahi REDDET!
+      return { matches: false, hasConflict: true };
     }
+    // URL eşleşti ve ID çelişkisi yok
+    return { matches: true, hasConflict: false };
+  }
 
-    // 2. Eğer hem bağlantıda hem kanıtta evidence_id varsa ve uyuşmuyorsa REDDET!
-    if (link.evidenceId && evId && link.evidenceId !== evId) {
-      return false;
-    }
+  // 3. Kanıt kaydında URL yoksa:
+  // Tıklanabilir olması için geçerli bir href şartı en başta doğrulandı.
+  // Yalnızca beklenen kanıtın kararlı ID'siyle doğrulanabiliyorsa kabul et.
+  if (evId && linkEvId && linkEvId === evId) {
+    return { matches: true, hasConflict: false };
+  }
 
-    // 3. Eşleşme kabulü
-    if (linkHasHref && evHasUrl) {
-      return true; // matchesHref true ve ID çelişkisi yok
-    }
+  return { matches: false, hasConflict: false };
+}
 
-    if (link.evidenceId && evId && link.evidenceId === evId) {
-      return true;
-    }
+/**
+ * HTML içeriğinde ilgili kanıt nesnesine işaret eden gerçek bir bağlantı olup olmadığını denetler.
+ * Yalnızca metinde geçen [Kanıt N] gibi düz metinler gerçek atıf sayılmaz;
+ * <a> etiketinde data-evidence-id veya href doğrulaması zorunludur.
+ */
+export function isEvidenceLinkedInHtml(html: string | null | undefined, evidence: KanitDosyasi): boolean {
+  if (!html || !evidence) return false;
+  const links = extractEvidenceLinks(html);
+  if (links.length === 0) return false;
 
-    return false;
-  });
+  return links.some(link => doesAnchorMatchEvidence(link, evidence).matches);
 }
 
 /**
@@ -459,6 +483,7 @@ export function calistirPukoStresTesti(params: {
 
     // 2. Aşamalarda Kanıt Var, ÖDR'de Yok Kontrolü
     const odrIcerik = odr?.icerik || '';
+    const cleanNormalizedTr = normalizeHtmlForCitation(odrIcerik);
     const allStageEvidences: KanitDosyasi[] = [];
     pukoStages.forEach(p => {
       if (p.kanit_dosyalari && Array.isArray(p.kanit_dosyalari)) {
@@ -468,17 +493,45 @@ export function calistirPukoStresTesti(params: {
       }
     });
 
-    pukoStages.forEach(p => {
+    // PUKÖ aşamalarını OzdegerlendirmeRaporuClient.tsx içindeki sırayla sırala:
+    // Sıralama kuralı: planlama, uygulama, kontrol, onlem, olgunluk
+    const orderMap: Record<string, number> = { planlama: 1, uygulama: 2, kontrol: 3, onlem: 4, olgunluk: 5 };
+    const siraliPukoStages = [...pukoStages].sort(
+      (a, b) => (orderMap[a.puko_asamasi?.toLowerCase()] || 99) - (orderMap[b.puko_asamasi?.toLowerCase()] || 99)
+    );
+
+    // Tek bir global sayaç ve ÖDR ekranıyla birebir aynı tekilleştirme kuralı:
+    // URL mevcutsa eşleştir, URL'siz nesneleri tekilleştirme
+    let localEvidenceCounter = 1;
+    const birlesikKanitlar: any[] = [];
+    const pukoKanitKanonikMap = new Map<KanitDosyasi, number>();
+
+    siraliPukoStages.forEach(p => {
+      if (p.kanit_dosyalari && Array.isArray(p.kanit_dosyalari)) {
+        p.kanit_dosyalari.forEach((k: any) => {
+          if (!k) return;
+          let ev = k.url ? birlesikKanitlar.find(e => Boolean(e.url) && e.url === k.url) : null;
+          if (!ev) {
+            ev = { ...k, no: localEvidenceCounter++ };
+            birlesikKanitlar.push(ev);
+          }
+          pukoKanitKanonikMap.set(k, ev.no);
+        });
+      }
+    });
+
+    siraliPukoStages.forEach(p => {
       if (p.kanit_dosyalari && Array.isArray(p.kanit_dosyalari)) {
         p.kanit_dosyalari.forEach(k => {
           const rawUrl = (k.url || k.dosya_url || k.storagePath || '').trim();
           const cleanName = (k.name || k.dosya_adi || '').trim();
           if (!rawUrl && !cleanName) return;
 
-          // ÖDR HTML içeriğinde gerçek bir kanıt bağlantısı (<a data-evidence-id="..." veya href="...">) var mı?
-          // Kanıtın yalnızca aşağıdaki listede (odr.kanitlar) durması yeterli değildir; metin içinde aktif atıf zorunludur.
-          // Ayrıca aynı dosya adı bu ölçütün başka bir PUKÖ aşamasına da yüklenmiş ve o kopyaya metinde atıf verilmişse mükerrer hata üretilmez.
-          const inOdrHtml =
+          // Kanonik global kanıt numarası (k.no veya k.evidence_no önüne GEÇİRİLMEZ):
+          const evNum = pukoKanitKanonikMap.get(k) ?? k.no ?? k.evidence_no;
+
+          // 1. Tıklanabilir <a> bağlantısı kontrolü
+          const hasAnchorLink =
             isEvidenceLinkedInHtml(odrIcerik, k) ||
             (Boolean(cleanName) &&
               allStageEvidences.some(
@@ -488,7 +541,20 @@ export function calistirPukoStresTesti(params: {
                   isEvidenceLinkedInHtml(odrIcerik, otherK)
               ));
 
+          // 2. Düz metin atfı kontrolü (örneğin: "[Kanıt 1]", "Kanıt 1: Karar", "Kanıt 1 olarak eklenmiştir", veya açık dosya adı)
+          const hasPlainTextCitation =
+            Boolean(evNum && new RegExp(`\\bKan[ıi]t\\s*${evNum}\\b`, 'i').test(cleanNormalizedTr)) ||
+            (Boolean(cleanName) && cleanNormalizedTr.toLowerCase().includes(cleanName.toLowerCase()));
+
+          const inOdrHtml = hasAnchorLink || hasPlainTextCitation;
+
           if (!inOdrHtml) {
+            const stageDescEmpty = isHtmlContentEmpty(p.aciklama);
+            const asamaAdi = ASAMA_ISIMLERI[p.puko_asamasi] || p.puko_asamasi;
+            const durumAciklamasi = stageDescEmpty
+              ? `${asamaAdi} aşamasında açıklama girilmediği için kanıt ÖDR metnine otomatik aktarılamamıştır. Tablodaki '+ TR' / '+ EN' butonunu kullanarak kanıtı metne ekleyin.`
+              : `PUKÖ aşamasında yüklenen bu kanıt ÖDR metninde yer almamaktadır. Tablodaki '+ TR' butonuna basarak metne ekleyin veya yukarıdaki 'Verileri Yeniden Çek' butonunu kullanın.`;
+
             asamadaVarOdrdeYok.push({
               alt_olcut_id: olcut.id,
               kod: olcut.kod,
@@ -496,6 +562,7 @@ export function calistirPukoStresTesti(params: {
               puko_asamasi: p.puko_asamasi,
               kanit_adi: cleanName || rawUrl.split('/').pop() || 'Kanıt Dosyası',
               kanit_url: rawUrl,
+              durum_aciklamasi: durumAciklamasi,
             });
           }
         });
@@ -668,42 +735,48 @@ export function denetleIngilizceOdr(params: {
   // 2. Kontrol: İngilizce metindeki kanıt atıflarını ([Evidence N] veya [Kanıt N]) denetle
   const htmlEn = icerikEn || '';
   
-  // ÖDR'deki kanıtlar ve PUKÖ aşamalarındaki kanıtları birleştir
-  const rawOdrKanitlar = Array.isArray(kanitlar) ? kanitlar : [];
-  const pukoKanitlar: any[] = [];
+  // PUKÖ aşamalarını OzdegerlendirmeRaporuClient.tsx içindeki sırayla sırala ve kanonik kanıt listesini oluştur
+  const canonicalEvidenceList: any[] = [];
+  let localEvidenceCounter = 1;
+
   if (pukoStages && Array.isArray(pukoStages)) {
     const orderMap: Record<string, number> = { planlama: 1, uygulama: 2, kontrol: 3, onlem: 4, iyilestirme: 4, olgunluk: 5 };
-    const sortedStages = [...pukoStages].sort((a, b) => (orderMap[a.puko_asamasi?.toLowerCase()] || 99) - (orderMap[b.puko_asamasi?.toLowerCase()] || 99));
-    
+    const sortedStages = [...pukoStages].sort(
+      (a, b) => (orderMap[a.puko_asamasi?.toLowerCase()] || 99) - (orderMap[b.puko_asamasi?.toLowerCase()] || 99)
+    );
     sortedStages.forEach(st => {
       if (Array.isArray(st.kanit_dosyalari)) {
-        st.kanit_dosyalari.forEach(k => {
-          if (k) pukoKanitlar.push(k);
+        st.kanit_dosyalari.forEach((k: any) => {
+          if (!k) return;
+          let ev = k.url
+            ? canonicalEvidenceList.find(e => Boolean(e.url) && e.url === k.url)
+            : null;
+          if (!ev) {
+            ev = { ...k, no: localEvidenceCounter++ };
+            canonicalEvidenceList.push(ev);
+          }
         });
       }
     });
   }
 
-  // ÖDR + PUKÖ birleşik kanıt havuzu
-  const combinedEvidenceList: any[] = [...rawOdrKanitlar];
-  pukoKanitlar.forEach(pk => {
-    const pkUrl = (pk.url || pk.dosya_url || pk.storagePath || '').trim();
-    const pkId = (pk.evidence_id || pk.id || '').trim();
-    const alreadyExists = combinedEvidenceList.some(e => {
-      const eUrl = (e.url || e.dosya_url || e.storagePath || '').trim();
-      const eId = (e.evidence_id || e.id || '').trim();
-      if (pkId && eId && pkId === eId) return true;
-      if (pkUrl && eUrl && (pkUrl === eUrl || urlsMatch(pkUrl, eUrl))) return true;
-      return false;
-    });
-    if (!alreadyExists) {
-      combinedEvidenceList.push(pk);
+  // ÖDR kaydındaki kanıtlar listesinde olup PUKÖ'de olmayan ek kanıtlar varsa ekle
+  const rawOdrKanitlar = Array.isArray(kanitlar) ? kanitlar : [];
+  rawOdrKanitlar.forEach((ok: any) => {
+    if (!ok) return;
+    let ev = ok.url
+      ? canonicalEvidenceList.find(e => Boolean(e.url) && e.url === ok.url)
+      : null;
+    if (!ev) {
+      const assignedNo = typeof ok.no === 'number' ? ok.no : localEvidenceCounter++;
+      ev = { ...ok, no: assignedNo };
+      canonicalEvidenceList.push(ev);
     }
   });
 
   // Türkçe ÖDR metninde geçen kanıt numaralarını etiketlerden arındırılmış metin üzerinden dinamik olarak tespit et
   const trNormalized = normalizeHtmlForCitation(icerikTr);
-  const trCitationRegex = /\[\s*Kan[ıi]t\s*(\d+)\s*\]/gi;
+  const trCitationRegex = /\bKan[ıi]t\s*(\d+)\b/gi;
   const trCitedNumbers = new Set<number>();
   let trMatch: RegExpExecArray | null;
   while ((trMatch = trCitationRegex.exec(trNormalized)) !== null) {
@@ -712,9 +785,9 @@ export function denetleIngilizceOdr(params: {
 
   const anchorLinks = extractEvidenceLinks(htmlEn);
 
-  // Metindeki tüm [Evidence N] ve [Kanıt N] ifadelerini etiketlerden arındırılmış metin üzerinden tara ve frekanslarını say
+  // Metindeki tüm [Evidence N] ve [Kanıt N] (ve düz cümle içi "Evidence N", "Kanıt N") ifadelerini tara
   const enNormalized = normalizeHtmlForCitation(htmlEn);
-  const citationRegex = /\[\s*(?:Evidence|Kan[ıi]t)\s*(\d+)\s*\]/gi;
+  const citationRegex = /\b(?:Evidence|Kan[ıi]t)\s*(\d+)\b/gi;
   const enFrequencies = new Map<number, number>();
   let match: RegExpExecArray | null;
   while ((match = citationRegex.exec(enNormalized)) !== null) {
@@ -722,15 +795,70 @@ export function denetleIngilizceOdr(params: {
     enFrequencies.set(num, (enFrequencies.get(num) || 0) + 1);
   }
 
-  // 1. Mükerrer Kanıt Denetimi: Aynı kanıt numarasının birden fazla kez geçmesi
-  enFrequencies.forEach((count, num) => {
+  // 1. Mükerrerlik Sayacı: Yalnızca kanıt numarasıyla ilişkilendirilebilen tıklanabilir <a> bağlantılarını say.
+  // Her <a> etiketi aynı numarayı içinde birden fazla yazsa bile en fazla 1 sayılır (Set kullanımı).
+  const anchorEvidenceCounts = new Map<number, number>();
+  const wrongTargetAnchorNums = new Set<number>();
+
+  anchorLinks.forEach(link => {
+    const numsInThisAnchor = new Set<number>();
+    const linkText = link.text || '';
+    const linkHref = link.href?.trim();
+    const linkHasHref = Boolean(linkHref && linkHref !== '#');
+    const labelRegex = /\b(?:Evidence|Kan[ıi]t)\s*(\d+)\b/gi;
+    let labelMatch: RegExpExecArray | null;
+    let foundAnyLabel = false;
+
+    while ((labelMatch = labelRegex.exec(linkText)) !== null) {
+      foundAnyLabel = true;
+      const num = parseInt(labelMatch[1], 10);
+      const targetEv =
+        canonicalEvidenceList.find(e => Number(e.no) === num) ||
+        (num > 0 && num <= canonicalEvidenceList.length ? canonicalEvidenceList[num - 1] : null);
+
+      if (targetEv) {
+        const { matches, hasConflict } = doesAnchorMatchEvidence(link, targetEv);
+        if (matches) {
+          numsInThisAnchor.add(num);
+        } else if (hasConflict && linkHasHref) {
+          // Yalnızca geçerli bir href mevcutken ve hedef uyuşmazlığı varsa wrongTargetAnchorNums'a ekle!
+          // href yoksa tıklanabilir bağlantı değildir; düz yazı atfını sahte hedef hatasına dönüştürme.
+          wrongTargetAnchorNums.add(num);
+        }
+      } else {
+        // Havuzda bu numaraya karşılık gelen bir kayıt yok
+        if (linkHasHref) {
+          wrongTargetAnchorNums.add(num);
+        }
+      }
+    }
+
+    if (!foundAnyLabel) {
+      // Görünen etiket yoksa data-evidence-id veya href'in kanıt havuzundaki karşılığından belirle
+      canonicalEvidenceList.forEach(ev => {
+        const num = Number(ev.no);
+        if (!num) return;
+        const { matches } = doesAnchorMatchEvidence(link, ev);
+        if (matches) {
+          numsInThisAnchor.add(num);
+        }
+      });
+    }
+
+    numsInThisAnchor.forEach(num => {
+      anchorEvidenceCounts.set(num, (anchorEvidenceCounts.get(num) || 0) + 1);
+    });
+  });
+
+  // İki ayrı tıklanabilir bağlantı aynı kanıt numarasına gidiyorsa mükerrer uyarısı üret:
+  anchorEvidenceCounts.forEach((count, num) => {
     if (count > 1) {
       issues.push({
         alt_olcut_id: altOlcutId,
         kod,
         olcut_adi: olcutAdi,
         sorun_tipi: 'mukerrer_kanit',
-        aciklama: `İngilizce ÖDR metninde [Evidence ${num}] (veya [Kanıt ${num}]) ${count} kez mükerrer kullanılmıştır.`,
+        aciklama: `İngilizce ÖDR metninde [Evidence ${num}] için ${count} ayrı tıklanabilir bağlantı eklenmiştir (mükerrer bağlantı).`,
         eksik_kanitlar: [`[Evidence ${num}]`],
       });
     }
@@ -750,90 +878,31 @@ export function denetleIngilizceOdr(params: {
     }
   });
 
-  // Anchor etiketleri dışındaki düz metin [Evidence N] ve [Kanıt N] ifadelerini tespit et
-  // Çok satırlı bağlantıları da temizleyebilmek için [\s\S]*? deseni kullanılır
-  const textWithoutAnchors = htmlEn.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, ' ');
-  const cleanTextWithoutAnchors = normalizeHtmlForCitation(textWithoutAnchors);
-  const plainTextNumbers = new Set<number>();
-  let plainMatch: RegExpExecArray | null;
-  while ((plainMatch = citationRegex.exec(cleanTextWithoutAnchors)) !== null) {
-    plainTextNumbers.add(parseInt(plainMatch[1], 10));
-  }
-
   const missingEvidenceLabels: string[] = [];
 
   enFrequencies.forEach((_, evNum) => {
     // 1. Hedef kanıt nesnesini bul:
-    // Sırasıyla e.no === evNum, e.evidence_no === evNum veya 1-based index (evNum - 1)
     const targetIdx = evNum - 1;
-    const nThEvidence = 
-      combinedEvidenceList.find(e => Number(e.no) === evNum || Number(e.evidence_no) === evNum) ||
-      (targetIdx >= 0 && targetIdx < combinedEvidenceList.length ? combinedEvidenceList[targetIdx] : null) ||
-      pukoKanitlar.find(e => Number(e.no) === evNum || Number(e.evidence_no) === evNum) ||
-      (targetIdx >= 0 && targetIdx < pukoKanitlar.length ? pukoKanitlar[targetIdx] : null);
+    const targetEv = 
+      canonicalEvidenceList.find(e => Number(e.no) === evNum) ||
+      (targetIdx >= 0 && targetIdx < canonicalEvidenceList.length ? canonicalEvidenceList[targetIdx] : null);
 
-    if (!nThEvidence) {
-      // Kanıt listesinde N'inci kanıt kaydı yok!
-      missingEvidenceLabels.push(`[Evidence ${evNum}]`);
+    if (!targetEv) {
+      // Kanıt havuzunda bu numaraya karşılık gelen bir kayıt yok!
+      missingEvidenceLabels.push(`[Evidence ${evNum}] (Havuzda ${evNum} numaralı kanıt tanımlı değil)`);
       return;
     }
 
-    const evUrl = (nThEvidence.url || nThEvidence.dosya_url || '').trim();
-    const evAnnotatedUrl = (nThEvidence.annotated_url || '').trim();
-    const evStoragePath = (nThEvidence.storagePath || '').trim();
-    const evId = (nThEvidence.evidence_id || nThEvidence.id || '').trim();
-    const urlRef = parseStorageReference(evUrl) || parseStorageReference(evAnnotatedUrl);
-    const evBucket = (nThEvidence.bucket || urlRef?.bucket || 'dokumanlar').trim();
-    const evHasUrl = Boolean(evUrl || evAnnotatedUrl || evStoragePath);
+    // 2. Tıklanabilir bağlantı doğrulaması
+    const validLinkCount = anchorEvidenceCounts.get(evNum) || 0;
 
-    // 2. Bu kanıt numarasına ait geçerli bir bağlantı var mı?
-    // Hem EN düğmesiyle eklenen [Evidence N] hem de TR/PUKÖ kaynaklı [Kanıt N] bağlantıları kabul edilir.
-    // Ayrıca bağlantı doğrudan bu kanıtın hedefine gidiyorsa veya ID'si eşleşiyorsa da kabul edilir.
-    const hasValidLink = anchorLinks.some(link => {
-      const linkText = link.text || '';
-      const textMatches = new RegExp(`\\[?\\s*(?:Evidence|Kan[ıi]t)\\s*${evNum}\\b`, 'i').test(linkText);
-
-      const linkHref = link.href?.trim();
-      const linkHasHref = Boolean(linkHref && linkHref !== '#');
-
-      // 1. Bağlantı metninde Evidence N veya Kanıt N geçiyorsa:
-      if (textMatches) {
-        if (linkHasHref && evHasUrl) {
-          const matchesHref = Boolean(
-            (evUrl && urlsMatch(linkHref, evUrl, evBucket)) ||
-            (evAnnotatedUrl && urlsMatch(linkHref, evAnnotatedUrl, evBucket)) ||
-            (evStoragePath && urlsMatch(linkHref, evStoragePath, evBucket))
-          );
-          if (matchesHref) return true;
-        }
-        if (link.evidenceId && evId && link.evidenceId === evId) {
-          return true;
-        }
-        if (linkHasHref && !evHasUrl) {
-          return true;
-        }
+    if (validLinkCount === 0) {
+      if (wrongTargetAnchorNums.has(evNum)) {
+        // Numaralı bağlantı var ama hedefi targetEv ile eşleşmiyor
+        missingEvidenceLabels.push(`[Evidence ${evNum}] (Bağlantı adresi hedef kanıt dosyasıyla eşleşmiyor)`);
       }
-
-      // 2. Bağlantı metninde numara yazmasa bile doğrudan bu kanıtın ID veya URL'sine gidiyorsa:
-      if (link.evidenceId && evId && link.evidenceId === evId) {
-        return true;
-      }
-      if (linkHasHref && evHasUrl) {
-        const matchesHref = Boolean(
-          (evUrl && urlsMatch(linkHref, evUrl, evBucket)) ||
-          (evAnnotatedUrl && urlsMatch(linkHref, evAnnotatedUrl, evBucket)) ||
-          (evStoragePath && urlsMatch(linkHref, evStoragePath, evBucket))
-        );
-        if (matchesHref) {
-          return true;
-        }
-      }
-
-      return false;
-    });
-
-    if (!hasValidLink) {
-      missingEvidenceLabels.push(`[Evidence ${evNum}]`);
+      // NOT: wrongTargetAnchorNums içinde yoksa, metinde sadece düz yazı atfı vardır.
+      // Düz yazı atfı geçerli kanıt numarasına karşılık geliyorsa hata sayılmaz (toplamSorun artmaz).
     }
   });
 
@@ -874,9 +943,34 @@ export function degerlendirTekOdr(params: {
   pukoStages?: PukoKayit[] | null;
 }): TekOdrDegerlendirmeSonucu {
   const htmlTr = params.icerikTr || '';
+  const cleanNormalizedTr = normalizeHtmlForCitation(htmlTr);
   const pukoStages = Array.isArray(params.pukoStages) ? params.pukoStages : [];
+
+  const orderMap: Record<string, number> = { planlama: 1, uygulama: 2, kontrol: 3, onlem: 4, iyilestirme: 4, olgunluk: 5 };
+  const siraliPukoStages = [...pukoStages].sort(
+    (a, b) => (orderMap[a.puko_asamasi?.toLowerCase()] || 99) - (orderMap[b.puko_asamasi?.toLowerCase()] || 99)
+  );
+
+  let localCounter = 1;
+  const canonicalList: any[] = [];
+  const pukoKanitKanonikMap = new Map<KanitDosyasi, number>();
+
+  siraliPukoStages.forEach(p => {
+    if (Array.isArray(p.kanit_dosyalari)) {
+      p.kanit_dosyalari.forEach((k: any) => {
+        if (!k) return;
+        let ev = k.url ? canonicalList.find(e => Boolean(e.url) && e.url === k.url) : null;
+        if (!ev) {
+          ev = { ...k, no: localCounter++ };
+          canonicalList.push(ev);
+        }
+        pukoKanitKanonikMap.set(k, ev.no);
+      });
+    }
+  });
+
   const allStageEvidences: KanitDosyasi[] = [];
-  pukoStages.forEach(p => {
+  siraliPukoStages.forEach(p => {
     if (Array.isArray(p.kanit_dosyalari)) {
       p.kanit_dosyalari.forEach(k => {
         if (k) allStageEvidences.push(k);
@@ -886,16 +980,18 @@ export function degerlendirTekOdr(params: {
 
   const uncitedTrEvidences: Array<{ kanit_no?: number | string; dosya_adi: string; asama: string; url?: string }> = [];
 
-  // PUKÖ aşamalarındaki kanıtların Türkçe ÖDR metninde aktif bağlantı olarak atıf alıp almadığını kontrol et
-  pukoStages.forEach(p => {
+  // PUKÖ aşamalarındaki kanıtların Türkçe ÖDR metninde aktif bağlantı veya düz metin olarak atıf alıp almadığını kontrol et
+  siraliPukoStages.forEach(p => {
     if (Array.isArray(p.kanit_dosyalari)) {
-      p.kanit_dosyalari.forEach((k, idx) => {
+      p.kanit_dosyalari.forEach((k) => {
         if (!k) return;
         const kUrl = (k.url || k.dosya_url || k.storagePath || '').trim();
         const kName = (k.name || k.dosya_adi || '').trim();
         if (!kUrl && !kName) return;
 
-        const inOdrHtml =
+        const evNum = pukoKanitKanonikMap.get(k) ?? k.no ?? k.evidence_no;
+
+        const hasAnchorLink =
           isEvidenceLinkedInHtml(htmlTr, k) ||
           (Boolean(kName) &&
             allStageEvidences.some(
@@ -904,6 +1000,12 @@ export function degerlendirTekOdr(params: {
                 (otherK.name || otherK.dosya_adi || '').trim() === kName &&
                 isEvidenceLinkedInHtml(htmlTr, otherK)
             ));
+
+        const hasPlainTextCitation =
+          Boolean(evNum && new RegExp(`\\bKan[ıi]t\\s*${evNum}\\b`, 'i').test(cleanNormalizedTr)) ||
+          (Boolean(kName) && cleanNormalizedTr.toLowerCase().includes(kName.toLowerCase()));
+
+        const inOdrHtml = hasAnchorLink || hasPlainTextCitation;
 
         if (!inOdrHtml) {
           const kRef = parseStorageReference(kUrl);
@@ -914,7 +1016,7 @@ export function degerlendirTekOdr(params: {
           );
           if (!alreadyListed) {
             uncitedTrEvidences.push({
-              kanit_no: k.no ?? k.evidence_no ?? (idx + 1),
+              kanit_no: evNum,
               dosya_adi: kName || kUrl.split('/').pop() || 'Kanıt Dosyası',
               asama: p.puko_asamasi || 'PUKÖ',
               url: kUrl,

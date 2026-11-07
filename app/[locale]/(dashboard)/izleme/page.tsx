@@ -749,6 +749,11 @@ export default function IzlemePage() {
                                     <p className="text-[11px] text-slate-400 truncate">
                                       {item.olcut_adi}
                                     </p>
+                                    {item.durum_aciklamasi && (
+                                      <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200/80 rounded-lg px-2.5 py-1.5 mt-1.5 font-medium leading-relaxed">
+                                        💡 {item.durum_aciklamasi}
+                                      </p>
+                                    )}
                                   </div>
                                   {isIstisna && (
                                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 shrink-0">
